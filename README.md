@@ -358,6 +358,12 @@ This system is built around drug tasks: DTI, ADR, DDI, labeling, repurposing, PG
 
 If you use DrugClaw in research or product work, cite this repository and the upstream resources used by the selected skills.
 
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=QSong-github/DrugClaw&type=Date)](https://star-history.com/#QSong-github/DrugClaw&Date)
+
+
 ## License
 
 MIT License
