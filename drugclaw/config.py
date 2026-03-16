@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 
+
 class Config:
     """System configuration and constants"""
 
@@ -24,14 +25,17 @@ class Config:
         with open(key_path, 'r') as file:
             data = json.load(file)
 
-        self.OPENAI_API_KEY = data.get('OPENAI_API_KEY')
+        self.OPENAI_API_KEY = data.get('api_key') or data.get('OPENAI_API_KEY')
+        self.api_key = self.OPENAI_API_KEY
         self.base_url = data.get('base_url')
-        os.environ['TOOLKIT_API_KEY'] = self.OPENAI_API_KEY
+        if self.OPENAI_API_KEY:
+            os.environ['TOOLKIT_API_KEY'] = self.OPENAI_API_KEY
 
         # Model settings
-        self.MODEL_NAME = "gpt-oss-120b"
-        self.TEMPERATURE = 0.7
-        self.MAX_TOKENS = 2000
+        self.MODEL_NAME = data.get("model") or "gpt-oss-120b"
+        self.TEMPERATURE = data.get("temperature", 0.7)
+        self.MAX_TOKENS = data.get("max_tokens", 2000)
+        self.TIMEOUT = data.get("timeout", 60)
 
         # System parameters
         self.MAX_ITERATIONS = 0
@@ -293,9 +297,10 @@ class Config:
     def get_llm_config(self) -> Dict[str, Any]:
         """Return LLM configuration dictionary"""
         return {
-            'api_key': self.OPENAI_API_KEY,
+            'api_key': self.api_key,
             'base_url': self.base_url,
             'model': self.MODEL_NAME,
             'temperature': self.TEMPERATURE,
-            'max_tokens': self.MAX_TOKENS
+            'max_tokens': self.MAX_TOKENS,
+            'timeout': self.TIMEOUT,
         }

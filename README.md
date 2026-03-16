@@ -65,12 +65,25 @@ Then fill in your real credentials:
 
 ```json
 {
+  "api_key": "your-api-key-here",
+  "base_url": "https://your-endpoint.com/v1",
+  "model": "gpt-oss-120b",
+  "max_tokens": 2000,
+  "timeout": 60,
+  "temperature": 0.7
+}
+```
+
+DrugClaw recommends the new format above, but still accepts the legacy format:
+
+```json
+{
   "OPENAI_API_KEY": "your-api-key-here",
   "base_url": "https://your-endpoint.com/v1"
 }
 ```
 
-DrugClaw currently resolves keys in this order:
+DrugClaw currently resolves key files in this order:
 
 - `DRUGCLAW_KEY_FILE`
 - `navigator_api_keys.json` in the repository root

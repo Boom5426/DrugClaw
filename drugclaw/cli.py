@@ -126,11 +126,14 @@ def _doctor_check_key_file(key_file: str) -> List[str]:
     except Exception as exc:
         return [_status_line("key_file", False, f"invalid JSON ({exc})")]
 
-    has_api_key = bool(data.get("OPENAI_API_KEY"))
+    api_key = data.get("api_key") or data.get("OPENAI_API_KEY")
+    has_api_key = bool(api_key)
     has_base_url = bool(data.get("base_url"))
     lines.append(_status_line("key_file", True, str(key_path)))
     lines.append(_status_line("OPENAI_API_KEY", has_api_key, "present" if has_api_key else "missing"))
     lines.append(_status_line("base_url", has_base_url, data.get("base_url", "missing")))
+    if "model" in data:
+        lines.append(_status_line("model", True, str(data["model"])))
     return lines
 
 
