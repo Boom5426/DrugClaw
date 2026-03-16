@@ -386,14 +386,17 @@ class WebSearchAgent:
         self.llm = llm_client
         self._web_skill = web_search_skill  # primary path
 
-        # Legacy adapters kept as fallback when web_search_skill is None
-        self.adapters = {
-            'pubmed': PubMedAdapter(email=pubmed_email, api_key=pubmed_api_key),
-            'clinical_trials': ClinicalTrialsAdapter(),
-            'duckduckgo': DuckDuckGoAdapter(),
-            'baidu': BaiduAdapter(),
-            'google_scholar': GoogleScholarAdapter(serpapi_key=serpapi_key),
-        }
+        # Legacy adapters are only needed when the injected WebSearchSkill path
+        # is unavailable.
+        self.adapters = None
+        if self._web_skill is None:
+            self.adapters = {
+                'pubmed': PubMedAdapter(email=pubmed_email, api_key=pubmed_api_key),
+                'clinical_trials': ClinicalTrialsAdapter(),
+                'duckduckgo': DuckDuckGoAdapter(),
+                'baidu': BaiduAdapter(),
+                'google_scholar': GoogleScholarAdapter(serpapi_key=serpapi_key),
+            }
     
     def get_system_prompt(self) -> str:
         """System prompt for the web search agent"""

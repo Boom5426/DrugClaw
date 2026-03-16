@@ -316,7 +316,6 @@ def _run_query(
         resource_filter=resource_filter or [],
     )
 
-    print(result["answer"])
     return 0 if result.get("success") else 1
 
 
