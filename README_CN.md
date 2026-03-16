@@ -65,12 +65,25 @@ cp navigator_api_keys.example.json navigator_api_keys.json
 
 ```json
 {
+  "api_key": "your-api-key-here",
+  "base_url": "https://your-endpoint.com/v1",
+  "model": "gpt-oss-120b",
+  "max_tokens": 2000,
+  "timeout": 60,
+  "temperature": 0.7
+}
+```
+
+当前推荐使用上面的新格式，但也兼容旧格式：
+
+```json
+{
   "OPENAI_API_KEY": "your-api-key-here",
   "base_url": "https://your-endpoint.com/v1"
 }
 ```
 
-当前版本会优先读取：
+当前版本会优先读取配置文件路径：
 
 - 环境变量 `DRUGCLAW_KEY_FILE`
 - 仓库根目录下的 `navigator_api_keys.json`

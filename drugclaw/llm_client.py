@@ -6,14 +6,15 @@ from typing import List, Dict, Any, Optional
 import json
 
 class LLMClient:
-    """Wrapper for OpenAI-compatible LLM API"""
+    """Wrapper for OpenAI-compatible LLM API."""
     
     def __init__(self, config):
         """Initialize LLM client with configuration"""
         self.config = config
         self.client = openai.OpenAI(
-            api_key=config.OPENAI_API_KEY,
-            base_url=config.base_url
+            api_key=config.api_key,
+            base_url=config.base_url,
+            timeout=config.TIMEOUT,
         )
         self.model = config.MODEL_NAME
     
@@ -39,8 +40,8 @@ class LLMClient:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
-            temperature=temperature or self.config.TEMPERATURE,
-            max_tokens=max_tokens or self.config.MAX_TOKENS
+            temperature=self.config.TEMPERATURE if temperature is None else temperature,
+            max_tokens=self.config.MAX_TOKENS if max_tokens is None else max_tokens
         )
         return response.choices[0].message.content
     
