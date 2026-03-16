@@ -88,9 +88,35 @@ cp navigator_api_keys.example.json navigator_api_keys.json
 - 环境变量 `DRUGCLAW_KEY_FILE`
 - 仓库根目录下的 `navigator_api_keys.json`
 
-### 3. 准备本地资源目录 `resources_metadata/`
+### 3. 直接运行官方 CLI Demo
 
-不少 skill 的访问模式是 `LOCAL_FILE`。这类资源需要你先把数据放到当前仓库的 `resources_metadata/` 目录，不能默认依赖在线接口。
+这是当前最推荐的体验入口。到这一步你只需要把 LLM 配好；本地资源包可以后面再补。
+
+无需安装也可以直接用模块方式运行：
+
+```bash
+python -m drugclaw list
+python -m drugclaw doctor
+python -m drugclaw demo
+```
+
+默认会固定使用：
+
+- `SIMPLE` 模式
+- 在线标签类资源
+- 默认 metformin 说明书与安全信息查询
+
+你也可以手动运行自定义问题：
+
+```bash
+python -m drugclaw run --query "What are the known drug targets of imatinib?"
+```
+
+如果这里已经能跑通，你其实已经有了一条最小可用路径。下一步是增强项，主要用于提升覆盖面，并启用依赖本地数据的那些 skill。
+
+### 4. 准备本地资源目录 `resources_metadata/` 以获得更广覆盖
+
+不少 skill 的访问模式是 `LOCAL_FILE`。这类资源不是首次 demo 的硬前置条件，但会影响覆盖面，也决定了部分本地数据型 skill 能不能真正可用。
 
 推荐的数据解析顺序：
 
@@ -113,27 +139,7 @@ cp navigator_api_keys.example.json navigator_api_keys.json
 
 如果某些旧的 `SKILL.md`、`example.py` 或历史文档里还保留绝对路径，只把它们当作示例；实际应以当前仓库下的 `resources_metadata/...` 为准。
 
-### 4. 直接运行官方 CLI Demo
-
-这是当前最推荐的体验入口。无需安装也可以直接用模块方式运行：
-
-```bash
-python -m drugclaw list
-python -m drugclaw doctor
-python -m drugclaw demo
-```
-
-默认会固定使用：
-
-- `SIMPLE` 模式
-- 在线标签类资源
-- 默认 metformin 说明书与安全信息查询
-
-你也可以手动运行自定义问题：
-
-```bash
-python -m drugclaw run --query "What are the known drug targets of imatinib?"
-```
+如果你想让更多 dataset/local-file 资源真正可用，或者希望检索更稳定、更全，再做这一步最合适。
 
 ### 5. 安装后直接使用 `drugclaw` 命令
 
@@ -163,7 +169,7 @@ python examples/run_minimal.py demo --preset label
 python examples/run_minimal.py run --query "What prescribing and safety information is available for metformin?"
 ```
 
-### 7. 先做环境自检
+### 7. 需要排查问题时再做环境自检
 
 ```bash
 python -m drugclaw doctor

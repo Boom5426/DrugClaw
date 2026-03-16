@@ -88,9 +88,35 @@ DrugClaw currently resolves key files in this order:
 - `DRUGCLAW_KEY_FILE`
 - `navigator_api_keys.json` in the repository root
 
-### 3. Prepare local resources under `resources_metadata/`
+### 3. Run the official CLI demo
 
-Many skills use `LOCAL_FILE` access mode. Those resources must exist under the local `resources_metadata/` tree rather than being assumed online.
+This is the recommended first experience. At this stage you only need a working LLM config; local resource packs can wait until later.
+
+You can run it without installation:
+
+```bash
+python -m drugclaw list
+python -m drugclaw doctor
+python -m drugclaw demo
+```
+
+The default demo uses:
+
+- `SIMPLE` mode
+- online labeling-style resources
+- a metformin labeling and safety query
+
+You can also run your own query:
+
+```bash
+python -m drugclaw run --query "What are the known drug targets of imatinib?"
+```
+
+If the demo runs successfully, you already have a minimal usable setup. The next step is optional and only matters when you want broader coverage from `LOCAL_FILE` skills and local datasets.
+
+### 4. Prepare local resources under `resources_metadata/` for broader coverage
+
+Many skills use `LOCAL_FILE` access mode. Those resources are not required for the first demo, but they improve coverage and unlock skills that depend on local datasets.
 
 Recommended resolution order:
 
@@ -113,27 +139,7 @@ Directory examples:
 
 If some old `SKILL.md`, `example.py`, or archived docs still show absolute paths, treat them as legacy examples. The active convention is the repository-local `resources_metadata/...` layout.
 
-### 4. Run the official CLI demo
-
-This is the recommended first experience. You can run it without installation:
-
-```bash
-python -m drugclaw list
-python -m drugclaw doctor
-python -m drugclaw demo
-```
-
-The default demo uses:
-
-- `SIMPLE` mode
-- online labeling-style resources
-- a metformin labeling and safety query
-
-You can also run your own query:
-
-```bash
-python -m drugclaw run --query "What are the known drug targets of imatinib?"
-```
+Downloading local resources is recommended if you want more stable retrieval from dataset-backed skills and better overall coverage than the minimal online-first demo path.
 
 ### 5. Install the `drugclaw` command
 
@@ -163,7 +169,7 @@ python examples/run_minimal.py demo --preset label
 python examples/run_minimal.py run --query "What prescribing and safety information is available for metformin?"
 ```
 
-### 7. Run environment checks first
+### 7. Run environment checks when you need diagnosis
 
 ```bash
 python -m drugclaw doctor
