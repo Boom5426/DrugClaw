@@ -67,9 +67,9 @@ cp navigator_api_keys.example.json navigator_api_keys.json
 {
   "api_key": "your-api-key-here",
   "base_url": "https://your-endpoint.com/v1",
-  "model": "gpt-oss-120b",
-  "max_tokens": 2000,
-  "timeout": 60,
+  "model": "gemini-3-flash-preview",
+  "max_tokens": 40000,
+  "timeout": 100,
   "temperature": 0.7
 }
 ```
