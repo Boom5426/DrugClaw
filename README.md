@@ -1,4 +1,4 @@
-# (DrugClaw)[https://dreamy-mousse-2d2806.netlify.app/]
+# DrugClaw
 
 <p align="center">
   <img src="./support/DrugClaw_Logo.png" alt="DrugClaw Logo" width="520" />
