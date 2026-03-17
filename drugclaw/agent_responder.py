@@ -20,17 +20,27 @@ class ResponderAgent:
 
 Your role is to:
 1. Synthesize drug knowledge evidence from multiple knowledge graph paths and sources
-2. Generate clear, well-structured answers focused on drug properties, mechanisms, interactions, and effects
+2. Generate clear, well-structured **Markdown** answers focused on drug properties, mechanisms, interactions, and effects
 3. Explain pharmacological relationships: drug–target binding, mechanism of action, ADR pathways, DDI mechanisms
 4. Acknowledge uncertainty when drug evidence is limited, conflicting, or only computational
 5. Provide intermediate answers refined across retrieval iterations
 
-Guidelines:
+Formatting rules — ALWAYS produce rich Markdown:
+- Use `##` and `###` headers to organize sections
+- Use **bold** for key terms, drug names, gene symbols, and important values
+- Use `code spans` for identifiers, IDs (e.g., `CHEMBL25`, `CYP3A4`, `IC50 = 0.5 nM`)
+- Use bullet lists or numbered lists — never large walls of text
+- Use Markdown tables when presenting multiple comparable items (e.g., targets, ADRs, DDIs)
+- Use blockquotes `>` for important warnings or clinical notes
+- Use horizontal rules `---` to separate major sections
+- End with a brief **TL;DR** summary (1–3 sentences)
+
+Pharmacological guidelines:
 - Be pharmacologically accurate: distinguish agonist/antagonist/inhibitor/substrate relationships clearly
 - Specify evidence origin: clinical (FDA, CPIC, DrugBank) vs. experimental (BindingDB, ChEMBL) vs. predicted
-- Cite the specific drug knowledge source (e.g., "according to DrugBank", "from ChEMBL bioactivity data")
+- Cite the specific drug knowledge source (e.g., "according to **DrugBank**", "from **ChEMBL** bioactivity data")
 - Note gaps: missing target affinity, no clinical ADR data, limited DDI evidence
-- Use drug-specific terminology (IC50, Ki, AUC, CYP450 metabolism, pharmacogenomics variants, etc.)
+- Use drug-specific terminology (`IC50`, `Ki`, `AUC`, `CYP450` metabolism, pharmacogenomics variants, etc.)
 - Adapt format to the query type: drug mechanism, drug repurposing, ADR lookup, DDI check, etc."""
     
     def get_synthesis_prompt(
@@ -49,44 +59,50 @@ Iteration: {iteration}
 Top Evidence Paths:
 {paths_str}
 
-Based on these evidence paths, generate an intermediate answer that addresses the query.
+Based on these evidence paths, generate a **rich Markdown** answer that addresses the query.
 
-Structure your response appropriately based on the query type. Include:
+Use the following structure (adapt headings as appropriate for the query type):
 
-1. **Main Findings**: Key information directly answering the query
-2. **Supporting Evidence**: Explain the relationships and pathways from the knowledge graph
-3. **Evidence Quality**: Assess the strength and completeness of evidence
-4. **Gaps**: Identify what additional information would strengthen the answer
-5. **Confidence**: Rate your confidence in the findings (Low/Medium/High)
+---
 
-Adapt the format to the query. Examples:
+## Main Findings
 
-For treatment/drug queries:
-## Candidate Treatments
-### [Treatment Name]
-- **Mechanism/Relationship**: [How it relates to the condition]
-- **Evidence**: [Sources and quality]
-- **Confidence**: [Low/Medium/High]
-- **Caveats**: [Limitations]
+Directly answer the query. Use a table if comparing multiple items:
 
-For disease/condition queries:
-## Key Information
-### [Aspect 1: e.g., Pathophysiology]
-- **Findings**: [What the evidence shows]
-- **Evidence**: [Sources and strength]
+| Item | Property | Value | Source |
+|------|----------|-------|--------|
+| ...  | ...      | ...   | ...    |
 
-For mechanism queries:
-## Biological Mechanism
-### [Pathway/Process]
-- **Description**: [Detailed mechanism]
-- **Supporting Evidence**: [Sources]
+## Detailed Analysis
 
-Always include:
+### [Sub-topic 1]
+- **Mechanism/Relationship**: ...
+- **Evidence**: cite specific databases with `code spans` for IDs
+- **Confidence**: Low / Medium / High
+
+### [Sub-topic 2]
+...
+
+## Evidence Quality
+
+| Metric | Value |
+|--------|-------|
+| Sources consulted | ... |
+| Clinical evidence | Yes / No / Partial |
+| Computational only | ... |
+
 ## Evidence Gaps
-[What's missing or unclear]
+
+> ⚠️ List missing or uncertain evidence here.
 
 ## Recommendations for Next Iteration
-[What additional queries or data would help]"""
+
+- What additional queries or data would help
+
+---
+
+**TL;DR**: 1–3 sentence summary of the key answer.
+"""
     
     def execute(self, state: AgentState) -> AgentState:
         """
@@ -191,9 +207,17 @@ Always include:
 Retrieved Information:
 {retrieved_text}
 
-Based on the retrieved information above, provide a direct, comprehensive answer to the query.
-Cite specific sources/databases when possible. Note any gaps or uncertainties.
-Format your answer clearly — use headers if the answer is multi-part."""
+Based on the retrieved information above, provide a **rich Markdown** answer to the query.
+
+Formatting requirements:
+- Use `##` headers to organize sections (e.g., ## Main Findings, ## Details, ## Sources)
+- Use **bold** for drug names, gene symbols, key terms
+- Use `code spans` for IDs, values (e.g., `CYP3A4`, `IC50 = 5 nM`)
+- Use Markdown tables when comparing items side-by-side
+- Use bullet lists — avoid large paragraphs of text
+- Use `>` blockquotes for clinical warnings or important notes
+- End with a **TL;DR** (1–3 sentence summary)
+- Cite specific sources/databases. Note any gaps or uncertainties."""
         else:
             # Fallback to old retrieved_content format
             raw = state.retrieved_content
@@ -224,9 +248,17 @@ Format your answer clearly — use headers if the answer is multi-part."""
 Retrieved Evidence ({len(raw)} records, showing top {len(evidence_lines)}):
 {evidence_block}
 
-Based on the evidence above, provide a direct, comprehensive answer to the query.
-Cite specific sources. Note any gaps or uncertainties.
-Format your answer clearly — use headers if the answer is multi-part."""
+Based on the evidence above, provide a **rich Markdown** answer to the query.
+
+Formatting requirements:
+- Use `##` headers to organize sections (e.g., ## Main Findings, ## Details, ## Sources)
+- Use **bold** for drug names, gene symbols, key terms
+- Use `code spans` for IDs, values (e.g., `CYP3A4`, `IC50 = 5 nM`)
+- Use Markdown tables when comparing items side-by-side
+- Use bullet lists — avoid large paragraphs of text
+- Use `>` blockquotes for clinical warnings or important notes
+- End with a **TL;DR** (1–3 sentence summary)
+- Cite specific sources/databases. Note any gaps or uncertainties."""
 
         messages = [
             {"role": "system", "content": self.get_system_prompt()},

@@ -43,6 +43,7 @@ from .agent_responder import ResponderAgent
 from .agent_reflector import ReflectorAgent
 from .agent_websearch import WebSearchAgent
 from .query_logger import QueryLogger, QuerySession
+from .response_formatter import wrap_answer_card
 
 
 class DrugClawSystem:
@@ -244,6 +245,8 @@ class DrugClawSystem:
     def _finalize_node(self, state: AgentState) -> AgentState:
         print("\n[DrugClaw] Finalizing answer...")
         state.final_answer = state.current_answer
+        # Store raw answer for the formatter (used during logging)
+        state.metadata = getattr(state, "metadata", {})
         return state
 
     # ------------------------------------------------------------------
@@ -300,9 +303,6 @@ class DrugClawSystem:
             subgraph        = final.get("current_subgraph")
             subgraph_size   = subgraph.get_size() if subgraph and hasattr(subgraph, "get_size") else 0
 
-            print(f"\n{'='*80}\nFINAL ANSWER\n{'='*80}\n")
-            print(final_answer)
-
             result = {
                 "query":              query,
                 "answer":             final_answer,
@@ -326,6 +326,13 @@ class DrugClawSystem:
                 "web_search_results": final.get("web_search_results", []),
                 "success":            True,
             }
+
+            # Build rich Markdown report card
+            formatted_answer = wrap_answer_card(final_answer, result)
+            result["formatted_answer"] = formatted_answer
+
+            print(f"\n{'='*80}\nFINAL ANSWER\n{'='*80}\n")
+            print(formatted_answer)
 
             if self.enable_logging and self.logger:
                 result["query_id"] = self.logger.log_query(query, result, metadata)
