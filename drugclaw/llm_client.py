@@ -1,13 +1,12 @@
 """
-LLM client wrapper — compatible with OpenAI, LLaMA (via vLLM/Ollama), and
-any OpenAI-compatible API endpoint.
+LLM client wrapper for OpenAI-compatible Navigator API
 """
 import openai
 from typing import List, Dict, Any, Optional
 import json
 
 class LLMClient:
-    """Wrapper for OpenAI-compatible LLM API (OpenAI, LLaMA/vLLM, Ollama, etc.)."""
+    """Wrapper for OpenAI-compatible LLM API."""
     
     def __init__(self, config):
         """Initialize LLM client with configuration"""
@@ -86,13 +85,61 @@ class LLMClient:
         
         try:
             return json.loads(response_text)
-        except json.JSONDecodeError as e:
-            # Fallback: try to extract JSON from the response
-            import re
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: try to extract JSON from the response
+        import re
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            try:
                 return json.loads(json_match.group())
-            raise ValueError(f"Could not parse JSON response: {e}")
+            except json.JSONDecodeError:
+                pass
+
+        # JSON likely truncated by max_tokens — attempt repair
+        repaired = self._repair_truncated_json(response_text)
+        if repaired is not None:
+            return repaired
+
+        raise ValueError(f"Could not parse JSON response (len={len(response_text)})")
+
+    @staticmethod
+    def _repair_truncated_json(text: str) -> Optional[Dict[str, Any]]:
+        """
+        Attempt to repair truncated JSON by closing open brackets/braces.
+
+        Common case: LLM hit max_tokens mid-array, producing something like
+        {"triples": [{"source_entity": "A", ...}, {"source_entity": "B", ...
+        We close the open structures so the already-extracted triples are usable.
+        """
+        # Strip trailing partial tokens (incomplete strings, etc.)
+        import re
+        # Remove trailing incomplete string value
+        text = re.sub(r',\s*"[^"]*$', '', text)
+        # Remove trailing incomplete key-value
+        text = re.sub(r',\s*"[^"]*"\s*:\s*$', '', text)
+        # Remove trailing comma
+        text = text.rstrip().rstrip(',')
+
+        # Count open brackets/braces and close them
+        open_braces = text.count('{') - text.count('}')
+        open_brackets = text.count('[') - text.count(']')
+
+        if open_braces < 0 or open_brackets < 0:
+            return None
+
+        text += ']' * open_brackets + '}' * open_braces
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Try more aggressive cleanup: strip trailing commas before closers
+            text = re.sub(r',\s*([\]\}])', r'\1', text)
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return None
     
     def list_models(self) -> List[str]:
         """List available models"""

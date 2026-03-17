@@ -126,6 +126,11 @@ Extract ALL relevant triples from the retrieved information.  Be thorough."""
             print("[Graph Build Agent] No retrieved text to process")
             return state
 
+        # Cap input length to avoid LLM producing truncated JSON
+        max_chars = 6000
+        if len(retrieved_text) > max_chars:
+            retrieved_text = retrieved_text[:max_chars] + "\n... (truncated)"
+
         # Build history summary from previous reasoning steps
         history_summary = self._build_history_summary(state)
 
