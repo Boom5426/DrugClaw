@@ -32,6 +32,7 @@ class ATCSkill(RAGSkill):
     access_mode = AccessMode.REST_API
     aim = "WHO drug classification"
     data_range = "ATC classification + daily doses"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

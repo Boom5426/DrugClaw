@@ -35,6 +35,7 @@ class LiverToxSkill(RAGSkill):
     access_mode = AccessMode.REST_API
     aim = "Drug-induced liver injury"
     data_range = "NCBI LiverTox clinical descriptions of DILI by drug"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

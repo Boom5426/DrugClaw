@@ -10,6 +10,7 @@ class DILIrankSkill(RAGSkill):
     name = "DILIrank"; subcategory = "drug_toxicity"; resource_type = "Dataset"
     access_mode = AccessMode.LOCAL_FILE; aim = "DILI severity ranking"
     data_range = "FDA DILI severity ranking (most-DILI-concern to no-DILI-concern)"
+    _implemented = True
     def __init__(self, config=None):
         super().__init__(config); self._drug_index=defaultdict(list); self._rows=[]; self._loaded=False
     def _ensure_loaded(self):

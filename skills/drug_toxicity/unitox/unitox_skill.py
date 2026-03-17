@@ -10,6 +10,7 @@ class UniToxSkill(RAGSkill):
     name = "UniTox"; subcategory = "drug_toxicity"; resource_type = "Dataset"
     access_mode = AccessMode.LOCAL_FILE; aim = "Drug toxicity database"
     data_range = "Large-scale drug toxicity database from clinical notes"
+    _implemented = True
     def __init__(self, config=None):
         super().__init__(config); self._drug_index=defaultdict(list); self._rows=[]; self._loaded=False
     def _ensure_loaded(self):

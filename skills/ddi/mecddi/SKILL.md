@@ -43,7 +43,7 @@ Search MecDDI drug-drug interaction records by drug name or drug ID. Auto-detect
 ## Data
 
 - **Source**: 7 TSV files downloaded from <https://mecddi.idrblab.net/download>
-- **Path**: `DATA_DIR` variable in `19_MecDDI.py` (default: `resources_metadata/ddi/MecDDI`)
+- **Path**: `DATA_DIR` variable in `19_MecDDI.py` (default: `/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/ddi/MecDDI`)
 - **Columns**: `A_Drug_ID`, `A_Drug_Name`, `B_Drug_ID`, `B_Drug_Name`, `Mechanism_Category`
 
 ## Usage

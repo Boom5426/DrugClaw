@@ -36,6 +36,7 @@ class NDFRTSkill(RAGSkill):
     access_mode = AccessMode.REST_API
     aim = "National drug file taxonomy"
     data_range = "VA National Drug File ontology of drug classes and roles"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

@@ -13,10 +13,14 @@ class Config:
     def __init__(self, key_file: str | None = None):
         """Initialize configuration from JSON key file"""
         repo_root = Path(__file__).resolve().parent.parent
-        default_key_file = (
-            os.environ.get("DRUGCLAW_KEY_FILE")
-            or str(repo_root / "navigator_api_keys.json")
-        )
+        env_key = os.environ.get("DRUGCLAW_KEY_FILE")
+        if env_key:
+            default_key_file = env_key
+        elif (repo_root / "api_keys.json").exists():
+            default_key_file = str(repo_root / "api_keys.json")
+        else:
+            # Legacy fallback
+            default_key_file = str(repo_root / "navigator_api_keys.json")
         key_path = Path(key_file or default_key_file).expanduser()
 
         if not key_path.is_absolute():
@@ -49,8 +53,8 @@ class Config:
 
 
         # ------------------------------------------------------------------
-        # Per-skill configurations — 68 LLM-friendly resources
-        # Organized by subcategory (from 68DrugResources.xlsx).
+        # Per-skill configurations — 70 LLM-friendly resources
+        # Organized by subcategory.
         #
         # Each key is the skill's .name attribute.
         # Leave {} to use defaults. Set paths for LOCAL_FILE skills.
@@ -86,6 +90,12 @@ class Config:
             # DTC: download CSV from drugtargetcommons.fimm.fi
             "DTC": {
                 "csv_path": "",          # e.g. "/data/dtc/DTC_data.csv"
+            },
+            # Molecular Targets: NCI CCDI GraphQL (no auth)
+            "Molecular Targets": {"timeout": 30},
+            # Molecular Targets Data: NCI DTP protein expression
+            "Molecular Targets Data": {
+                "data_path": "",         # e.g. "/data/molecular_targets/WEB_DATA_PROTEIN.TXT"
             },
 
             # ── ADR (Adverse Drug Reaction) ────────────────────────────
@@ -254,44 +264,81 @@ class Config:
         }
 
         # ------------------------------------------------------------------
-        # Default active skills — only implemented skills (25 with example.py + SKILL.md)
+        # Default active skills — implemented skills (57 with example.py + SKILL.md)
         # ------------------------------------------------------------------
         self.DEFAULT_ACTIVE_SKILLS = [
-            # DTI (6 implemented)
+            # DTI (10 implemented)
             "ChEMBL",           # CLI-first (chembl_webresource_client)
             "BindingDB",        # REST API
             "DGIdb",            # REST API / GraphQL
             "Open Targets Platform",  # REST API / GraphQL
             "TTD",              # LOCAL_FILE
             "STITCH",           # REST API
-            # ADR (2 implemented)
+            "TarKG",            # LOCAL_FILE
+            "GDKD",             # LOCAL_FILE
+            "Molecular Targets",     # REST API (GraphQL)
+            "Molecular Targets Data", # LOCAL_FILE
+            # ADR (4 implemented)
             "FAERS",            # DATASET
             "SIDER",            # LOCAL_FILE
-            # Drug Knowledgebase (5 implemented)
+            "nSIDES",           # REST API
+            "ADReCS",           # REST API
+            # Drug Knowledgebase (8 implemented)
             "UniD3",            # LOCAL_FILE (GraphML)
             "DrugBank",         # REST API (API key optional)
             "IUPHAR/BPS Guide to Pharmacology",  # REST API
             "DrugCentral",      # REST API
             "CPIC",             # REST API
+            "PharmKG",          # LOCAL_FILE
+            "WHO Essential Medicines List",  # LOCAL_FILE
+            "FDA Orange Book",  # REST API
             # Drug Mechanism (1 implemented)
             "DRUGMECHDB",       # REST API (auto-download)
             # Drug Labeling (3 implemented)
             "openFDA Human Drug",    # REST API
             "DailyMed",         # REST API
             "MedlinePlus Drug Info", # REST API
-            # Drug Ontology (2 implemented)
+            # Drug Ontology (4 implemented)
             "RxNorm",           # REST API
             "ChEBI",            # CLI-first (libchebipy)
-            # Drug Repurposing (1 implemented)
+            "ATC/DDD",          # REST API
+            "NDF-RT",           # REST API
+            # Drug Repurposing (6 implemented)
             "RepoDB",           # DATASET
+            "DRKG",             # LOCAL_FILE
+            "OREGANO",          # LOCAL_FILE
+            "Drug Repurposing Hub",  # LOCAL_FILE
+            "DrugRepoBank",     # REST API
+            "RepurposeDrugs",   # REST API
             # Pharmacogenomics (1 implemented)
             "PharmGKB",         # REST API
             # DDI (3 implemented)
             "MecDDI",           # LOCAL_FILE
             "DDInter",          # REST API
             "KEGG Drug",        # CLI-first (bioservices)
-            # Drug Review (1 implemented)
+            # Drug Review (2 implemented)
             "WebMD Drug Reviews",   # DATASET
+            "Drug Reviews (Drugs.com)",  # DATASET
+            # Drug Toxicity (4 implemented)
+            "UniTox",           # LOCAL_FILE
+            "LiverTox",         # REST API
+            "DILIrank",         # LOCAL_FILE
+            "DILI",             # LOCAL_FILE
+            # Drug Combination (2 implemented)
+            "DrugCombDB",       # LOCAL_FILE
+            "DrugComb",         # LOCAL_FILE
+            # Drug Molecular Property (1 implemented)
+            "GDSC",             # LOCAL_FILE
+            # Drug Disease (1 implemented)
+            "SemaTyP",          # LOCAL_FILE
+            # Drug NLP (7 implemented)
+            "DDI Corpus 2013",  # DATASET
+            "DrugProt",         # DATASET
+            "ADE Corpus",       # DATASET
+            "CADEC",            # DATASET
+            "PsyTAR",           # DATASET
+            "TAC 2017 ADR",     # DATASET
+            "PHEE",             # DATASET
         ]
 
     def get_llm_config(self) -> Dict[str, Any]:

@@ -9,6 +9,7 @@ class RepurposingHubSkill(RAGSkill):
     name = "Drug Repurposing Hub"; subcategory = "drug_repurposing"; resource_type = "Database"
     access_mode = AccessMode.LOCAL_FILE; aim = "Repurposing screening library"
     data_range = "Broad-spectrum repurposing library with mechanism annotations"
+    _implemented = True
     def __init__(self, config=None):
         super().__init__(config); self._rows=[]; self._drug_index=defaultdict(list); self._loaded=False
     def _ensure_loaded(self):

@@ -37,6 +37,7 @@ class TarKGSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Target knowledge graph"
     data_range = "Drug-target KG linking targets to diseases via pathways"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

@@ -38,6 +38,7 @@ class SemaTyPSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Semantic drug-disease KG"
     data_range = "Drug-disease KG built from semantic types in biomedical literature"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

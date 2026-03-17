@@ -38,6 +38,7 @@ class DrugProtSkill(DatasetRAGSkill):
     access_mode = AccessMode.DATASET
     aim = "Drug-protein relation corpus"
     data_range = "BioCreative VII drug-protein relation extraction corpus"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

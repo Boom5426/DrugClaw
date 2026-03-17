@@ -29,6 +29,7 @@ class GDKDSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Genomics-drug knowledge"
     data_range = "Genomics-Drug Knowledge Database from Synapse"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

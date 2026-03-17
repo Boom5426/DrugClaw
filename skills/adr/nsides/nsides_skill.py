@@ -32,6 +32,7 @@ class nSIDESSkill(RAGSkill):
     access_mode = AccessMode.REST_API
     aim = "Adverse drug effects (broad)"
     data_range = "Off-label and on-label adverse effects via NLP on EHRs"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

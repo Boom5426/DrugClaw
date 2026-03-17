@@ -35,6 +35,7 @@ class DrugsComReviewsSkill(DatasetRAGSkill):
     access_mode = AccessMode.DATASET
     aim = "Drug reviews dataset"
     data_range = "UCI/Drugs.com drug reviews with patient ratings"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

@@ -4,8 +4,8 @@ Category: Drug-centric | Type: DB | Subcategory: Drug Knowledgebase
 Source : https://go.drugbank.com/releases/latest  (free account required)
 
 Data location (fixed):
-  XML : resources_metadata/drug_knowledgebase/DrugBank/full database.xml
-  CSV : resources_metadata/drug_knowledgebase/DrugBank/drugbank vocabulary.csv
+  XML : /blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/drug_knowledgebase/DrugBank/full database.xml
+  CSV : /blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/drug_knowledgebase/DrugBank/drugbank vocabulary.csv
 
 Supports two data formats (auto-selected, XML preferred):
   • Full XML  – rich fields (description, targets, interactions, categories …)
@@ -14,10 +14,9 @@ Supports two data formats (auto-selected, XML preferred):
 
 import os, csv, json, re
 from typing import Union
-from pathlib import Path
 
 # ── Config ──────────────────────────────────────────────────────────────
-_BASE = str(Path(__file__).resolve().parents[3] / "resources_metadata" / "drug_knowledgebase" / "DrugBank")
+_BASE = "/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/drug_knowledgebase/DrugBank"
 VOCAB_PATH = os.path.join(_BASE, "drugbank vocabulary.csv")   # lightweight
 XML_PATH   = os.path.join(_BASE, "full database.xml")         # rich fields
 DATA_PATH  = XML_PATH if os.path.exists(XML_PATH) else VOCAB_PATH

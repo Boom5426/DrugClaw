@@ -42,6 +42,7 @@ class GDSCSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Cancer drug target and sensitivity resource"
     data_range = "GDSC compound metadata plus fitted drug sensitivity profiles"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

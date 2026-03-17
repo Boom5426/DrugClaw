@@ -44,6 +44,7 @@ class OREGANOSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Drug repurposing candidates"
     data_range = "Drug repurposing predictions with clinical evidence"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

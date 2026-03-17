@@ -27,6 +27,7 @@ class WHOEssentialMedicinesSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Essential medicines"
     data_range = "WHO list of essential medicines with therapeutic category"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

@@ -51,7 +51,7 @@ for entity, r in results.items():
 ## Data Files
 
 All pre-downloaded and extracted under:  
-`resources_metadata/adr/SIDER`
+`/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/adr/SIDER`
 
 | File | Content |
 |---|---|

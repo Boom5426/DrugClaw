@@ -37,5 +37,5 @@ Each interaction row contains: `DDInterID_A`, `Drug_A`, `DDInterID_B`, `Drug_B`,
 ## Data
 
 - **Source**: 8 CSV files partitioned by ATC code (`ddinter_downloads_code_{A,B,D,H,L,P,R,V}.csv`)
-- **Path**: `resources_metadata/ddi/DDInter/`
+- **Path**: `/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/ddi/DDInter/`
 - **Citation**: Xiong G, et al. *Nucleic Acids Res.* 2025;53(D1):D1356. DDInter 2.0.

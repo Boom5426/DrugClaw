@@ -14,10 +14,9 @@ import csv
 import gzip
 from collections import defaultdict
 from typing import Union
-from pathlib import Path
 
 # ── Data path ────────────────────────────────────────────────────────
-DATA_DIR = str(Path(__file__).resolve().parents[3] / "resources_metadata" / "adr" / "SIDER")
+DATA_DIR = "/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/adr/SIDER"
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

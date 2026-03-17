@@ -14,8 +14,8 @@
 
 <p align="center">
   <img alt="Domain" src="https://img.shields.io/badge/Domain-Drug%20Intelligence-1f6feb">
-  <img alt="Resources" src="https://img.shields.io/badge/Resources-68%20Curated-0a7f5a">
-  <img alt="Skills" src="https://img.shields.io/badge/Implemented%20Skills-25-f59e0b">
+  <img alt="Resources" src="https://img.shields.io/badge/Resources-70%20Curated-0a7f5a">
+  <img alt="Skills" src="https://img.shields.io/badge/Implemented%20Skills-57-f59e0b">
   <img alt="Modes" src="https://img.shields.io/badge/Modes-GRAPH%20%7C%20SIMPLE%20%7C%20WEB__ONLY-7c3aed">
 </p>
 
@@ -27,7 +27,7 @@ It is not a generic RAG stack with a biomedical prompt on top. DrugClaw is opini
 
 Most biomedical QA systems stop at "retrieve a few passages and summarize them." Drug questions are harder: they require precise handling of target evidence, ADR provenance, DDI mechanisms, labeling details, and PGx constraints. Some tools connect many databases but flatten them into a single rigid interface; others optimize for conversational UX while relying on weak, thin, or poorly traceable evidence.
 
-- Organizes **68 curated drug resources** into a navigable **15-subcategory skill tree**
+- Organizes **70 curated drug resources** into a navigable **15-subcategory skill tree**
 - Uses a **Code Agent** to query each source in its native style instead of forcing one rigid abstraction
 - Supports **graph-based reasoning** for multi-hop evidence synthesis
 - Keeps **Web Search** as a fallback for recent literature and external evidence
@@ -53,12 +53,14 @@ pip install libchebipy
 pip install bioservices
 ```
 
-### 2. Prepare `navigator_api_keys.json`
+### 2. Prepare `api_keys.json`
+
+DrugClaw uses any **OpenAI-compatible** API endpoint. This includes OpenAI, Azure OpenAI, LLaMA served via vLLM or Ollama, and other OpenAI-compatible providers.
 
 First copy the template:
 
 ```bash
-cp navigator_api_keys.example.json navigator_api_keys.json
+cp api_keys.example.json api_keys.json
 ```
 
 Then fill in your real credentials:
@@ -67,26 +69,30 @@ Then fill in your real credentials:
 {
   "api_key": "your-api-key-here",
   "base_url": "https://your-endpoint.com/v1",
-  "model": "gpt-oss-120b",
+  "model": "gpt-4o",
   "max_tokens": 2000,
   "timeout": 60,
   "temperature": 0.7
 }
 ```
 
-DrugClaw recommends the new format above, but still accepts the legacy format:
+**Example configurations for common providers:**
 
-```json
-{
-  "OPENAI_API_KEY": "your-api-key-here",
-  "base_url": "https://your-endpoint.com/v1"
-}
-```
+| Provider | `base_url` | `model` |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o`, `gpt-4o-mini` |
+| Azure OpenAI | `https://YOUR.openai.azure.com/v1` | your deployment name |
+| vLLM (local LLaMA) | `http://localhost:8000/v1` | `meta-llama/Llama-3.1-8B-Instruct` |
+| Ollama | `http://localhost:11434/v1` | `llama3.1`, `qwen2.5` |
+| Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-70B-Instruct-Turbo` |
 
-DrugClaw currently resolves key files in this order:
+DrugClaw also accepts the legacy `OPENAI_API_KEY` field and `navigator_api_keys.json` filename for backward compatibility.
 
-- `DRUGCLAW_KEY_FILE`
-- `navigator_api_keys.json` in the repository root
+DrugClaw resolves key files in this order:
+
+- `DRUGCLAW_KEY_FILE` environment variable
+- `api_keys.json` in the repository root
+- `navigator_api_keys.json` in the repository root (legacy)
 
 ### 3. Run the official CLI demo
 
@@ -177,11 +183,10 @@ python -m drugclaw doctor
 
 It checks:
 
-- whether `navigator_api_keys.json` exists and is complete
+- whether `api_keys.json` (or `navigator_api_keys.json`) exists and is complete
 - whether `langgraph` and `openai` are importable
 - whether built-in demo presets have the resources they need
 - whether the `drugclaw` command is installed
-- whether `navigator_api_keys.json` is still tracked by Git
 - whether repository Git hooks are enabled
 
 ### 8. Enable secret-protection Git hooks
@@ -190,10 +195,7 @@ It checks:
 git config core.hooksPath .githooks
 ```
 
-These hooks block:
-
-- committing `navigator_api_keys.json`
-- pushing a repository where `navigator_api_keys.json` is still tracked
+These hooks block committing API key files.
 
 ### 9. List built-in demos and recommended entrypoints
 
@@ -215,7 +217,7 @@ from drugclaw.config import Config
 from drugclaw.main_system import DrugClawSystem
 from drugclaw.models import ThinkingMode
 
-config = Config(key_file="navigator_api_keys.json")
+config = Config(key_file="api_keys.json")
 system = DrugClawSystem(config)
 
 result = system.query(
@@ -257,10 +259,10 @@ For `LOCAL_FILE` skills, the recommended default behavior is:
 
 ### 2. Organized around drug tasks
 
-DrugClaw currently provides **25 implemented skills** across:
+DrugClaw currently provides **57 implemented skills** across all 15 subcategories:
 
-- drug targets and activity
-- adverse drug reactions and pharmacovigilance
+- drug targets and activity (DTI)
+- adverse drug reactions and pharmacovigilance (ADR)
 - drug knowledgebases
 - mechanisms of action
 - labeling and prescribing information
@@ -268,7 +270,12 @@ DrugClaw currently provides **25 implemented skills** across:
 - drug repurposing
 - pharmacogenomics
 - drug-drug interactions
+- drug toxicity
+- drug combinations
+- drug molecular properties
+- drug-disease associations
 - patient reviews
+- drug NLP / text mining
 
 ### 3. Three working modes
 
@@ -313,20 +320,25 @@ Code Agent
          -> Final Answer
 ```
 
-## Implemented Skills
+## Implemented Skills (57)
 
 | Category | Skills |
 | --- | --- |
-| DTI | ChEMBL, BindingDB, DGIdb, Open Targets Platform, TTD, STITCH |
-| ADR | FAERS, SIDER |
-| Drug Knowledgebase | UniD3, DrugBank, IUPHAR/BPS Guide to Pharmacology, DrugCentral, CPIC |
-| Drug Mechanism | DRUGMECHDB |
-| Drug Labeling | openFDA Human Drug, DailyMed, MedlinePlus Drug Info |
-| Drug Ontology | RxNorm, ChEBI |
-| Drug Repurposing | RepoDB |
-| Pharmacogenomics | PharmGKB |
-| DDI | MecDDI, DDInter, KEGG Drug |
-| Reviews | WebMD Drug Reviews |
+| DTI (10) | ChEMBL, BindingDB, DGIdb, Open Targets Platform, TTD, STITCH, TarKG, GDKD, Molecular Targets, Molecular Targets Data |
+| ADR (4) | FAERS, SIDER, nSIDES, ADReCS |
+| Drug Knowledgebase (8) | UniD3, DrugBank, IUPHAR/BPS, DrugCentral, CPIC, PharmKG, WHO Essential Medicines List, FDA Orange Book |
+| Drug Mechanism (1) | DRUGMECHDB |
+| Drug Labeling (3) | openFDA Human Drug, DailyMed, MedlinePlus Drug Info |
+| Drug Ontology (4) | RxNorm, ChEBI, ATC/DDD, NDF-RT |
+| Drug Repurposing (6) | RepoDB, DRKG, OREGANO, Drug Repurposing Hub, DrugRepoBank, RepurposeDrugs |
+| Pharmacogenomics (1) | PharmGKB |
+| DDI (3) | MecDDI, DDInter, KEGG Drug |
+| Drug Toxicity (4) | UniTox, LiverTox, DILIrank, DILI |
+| Drug Combination (2) | DrugCombDB, DrugComb |
+| Drug Molecular Property (1) | GDSC |
+| Drug Disease (1) | SemaTyP |
+| Drug Review (2) | WebMD Drug Reviews, Drug Reviews (Drugs.com) |
+| Drug NLP (7) | DDI Corpus 2013, DrugProt, ADE Corpus, CADEC, PsyTAR, TAC 2017 ADR, PHEE |
 
 `WebSearch` is also available as an external retrieval supplement built around DuckDuckGo + PubMed style search.
 

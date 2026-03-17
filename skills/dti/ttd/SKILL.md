@@ -13,7 +13,7 @@ description: >
 
 **Source:** https://ttd.idrblab.cn/  
 **Paper:** https://academic.oup.com/nar/article/52/D1/D1465/7275004  
-**Data dir:** `resources_metadata/dti/TTD`
+**Data dir:** `/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/dti/TTD`
 
 ## Data files (4 required)
 

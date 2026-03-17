@@ -37,6 +37,7 @@ class PsyTARSkill(DatasetRAGSkill):
     access_mode = AccessMode.DATASET
     aim = "Psychiatric drug ADE corpus"
     data_range = "Annotated psychiatric drug adverse events from patient forums"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

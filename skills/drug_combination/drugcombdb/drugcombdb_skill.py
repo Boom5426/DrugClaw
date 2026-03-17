@@ -35,6 +35,7 @@ class DrugCombDBSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Drug combination database"
     data_range = "Human/animal drug combination synergy/antagonism records"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

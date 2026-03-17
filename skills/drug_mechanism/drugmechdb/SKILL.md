@@ -14,7 +14,7 @@ Search drug mechanism-of-action paths by entity name or ID. Each path is a direc
 ## Data
 
 - **Source**: `indication_paths.json`
-- **Path**: `resources_metadata/drug_mechanism/DRUGMECHDB/indication_paths.json`
+- **Path**: `/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/drug_mechanism/DRUGMECHDB/indication_paths.json`
 - **Records**: ~4846 mechanism paths, ~32k relationships
 
 ## Entity auto-detection

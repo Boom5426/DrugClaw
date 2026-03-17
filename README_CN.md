@@ -14,8 +14,8 @@
 
 <p align="center">
   <img alt="Domain" src="https://img.shields.io/badge/领域-药物智能-1f6feb">
-  <img alt="Resources" src="https://img.shields.io/badge/资源-68%20个精选-0a7f5a">
-  <img alt="Skills" src="https://img.shields.io/badge/已实现技能-25-f59e0b">
+  <img alt="Resources" src="https://img.shields.io/badge/资源-70%20个精选-0a7f5a">
+  <img alt="Skills" src="https://img.shields.io/badge/已实现技能-57-f59e0b">
   <img alt="Modes" src="https://img.shields.io/badge/模式-GRAPH%20%7C%20SIMPLE%20%7C%20WEB__ONLY-7c3aed">
 </p>
 
@@ -27,7 +27,7 @@ DrugClaw 是一个围绕药物任务构建的多智能体 RAG 系统，专门处
 
 大多数生物医学问答系统停留在“检索几段文本然后总结”的层面，但药物问题真正难的地方，往往在于能不能把靶点证据、ADR 来源、DDI 机制、标签信息和 PGx 约束这些细节讲清楚。也有一些工具虽然接入了很多数据库，却把所有资源强行压成同一种接口，最后牺牲了资源本身的表达力；还有一些系统更强调对话体验或代理外壳，但底层缺少足够密集、结构化且可追溯的药物资源支撑，最终还是回到“语言流畅但证据偏薄”。
 
-- 将 **68 个精选药物资源**组织为可导航的 **15 类技能树**
+- 将 **70 个精选药物资源**组织为可导航的 **15 类技能树**
 - 通过 **Code Agent** 为不同资源现写查询代码，而不是强行塞进单一死板接口
 - 支持 **图结构推理**，更适合多跳药物证据综合
 - 保留 **Web Search** 作为最新文献和外部证据的补充通道
@@ -53,40 +53,45 @@ pip install libchebipy
 pip install bioservices
 ```
 
-### 2. 准备 `navigator_api_keys.json`
+### 2. 准备 `api_keys.json`
+
+DrugClaw 使用任何 **OpenAI 兼容** 的 API 端点，包括 OpenAI、Azure OpenAI、通过 vLLM 或 Ollama 提供的 LLaMA，以及其他 OpenAI 兼容的服务商。
 
 先复制模板文件：
 
 ```bash
-cp navigator_api_keys.example.json navigator_api_keys.json
+cp api_keys.example.json api_keys.json
 ```
 
-然后填写你自己的真实凭证。模板格式如下：
+然后填写你自己的真实凭证：
 
 ```json
 {
   "api_key": "your-api-key-here",
   "base_url": "https://your-endpoint.com/v1",
-  "model": "gemini-3-flash-preview",
-  "max_tokens": 40000,
-  "timeout": 100,
+  "model": "gpt-4o",
+  "max_tokens": 2000,
+  "timeout": 60,
   "temperature": 0.7
 }
 ```
 
-当前推荐使用上面的新格式，但也兼容旧格式：
+**常见服务商配置示例：**
 
-```json
-{
-  "OPENAI_API_KEY": "your-api-key-here",
-  "base_url": "https://your-endpoint.com/v1"
-}
-```
+| 服务商 | `base_url` | `model` |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o`, `gpt-4o-mini` |
+| vLLM (本地 LLaMA) | `http://localhost:8000/v1` | `meta-llama/Llama-3.1-8B-Instruct` |
+| Ollama | `http://localhost:11434/v1` | `llama3.1`, `qwen2.5` |
+| Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-70B-Instruct-Turbo` |
 
-当前版本会优先读取配置文件路径：
+也兼容旧版 `OPENAI_API_KEY` 字段和 `navigator_api_keys.json` 文件名。
+
+当前版本会按以下顺序查找配置文件：
 
 - 环境变量 `DRUGCLAW_KEY_FILE`
-- 仓库根目录下的 `navigator_api_keys.json`
+- 仓库根目录下的 `api_keys.json`
+- 仓库根目录下的 `navigator_api_keys.json`（旧版兼容）
 
 ### 3. 直接运行官方 CLI Demo
 
@@ -177,7 +182,7 @@ python -m drugclaw doctor
 
 它会检查：
 
-- `navigator_api_keys.json` 是否存在且字段完整
+- `api_keys.json`（或 `navigator_api_keys.json`）是否存在且字段完整
 - `langgraph` 和 `openai` 是否可导入
 - 内置 demo 依赖的资源当前是否具备运行条件
 - 是否已经安装出 `drugclaw` 命令
@@ -192,8 +197,7 @@ git config core.hooksPath .githooks
 
 启用后会阻止：
 
-- 提交 `navigator_api_keys.json`
-- 推送一个仍在被 Git 跟踪的 `navigator_api_keys.json`
+- 提交 API 密钥文件
 
 ### 9. 查看内置 demo 和推荐入口
 
@@ -215,7 +219,7 @@ from drugclaw.config import Config
 from drugclaw.main_system import DrugClawSystem
 from drugclaw.models import ThinkingMode
 
-config = Config(key_file="navigator_api_keys.json")
+config = Config(key_file="api_keys.json")
 system = DrugClawSystem(config)
 
 result = system.query(
@@ -257,10 +261,10 @@ system.query("...", thinking_mode=ThinkingMode.WEB_ONLY)
 
 ### 2. 明确围绕药物任务组织
 
-当前已落地 **25 个可用 skill**，覆盖：
+当前已落地 **57 个可用 skill**，覆盖全部 15 个子类别：
 
-- 药物靶点与活性
-- 不良反应与药物警戒
+- 药物靶点与活性（DTI）
+- 不良反应与药物警戒（ADR）
 - 药物知识库
 - 药物机制
 - 药品标签与说明书
@@ -268,7 +272,12 @@ system.query("...", thinking_mode=ThinkingMode.WEB_ONLY)
 - 药物重定位
 - 药物基因组学
 - 药物相互作用
+- 药物毒性
+- 药物组合
+- 药物分子性质
+- 药物-疾病关联
 - 患者评价
+- 药物 NLP / 文本挖掘
 
 ### 3. 三种工作模式
 
@@ -317,16 +326,21 @@ Code Agent
 
 | 类别 | 技能 |
 | --- | --- |
-| DTI | ChEMBL, BindingDB, DGIdb, Open Targets Platform, TTD, STITCH |
-| ADR | FAERS, SIDER |
-| 药物知识库 | UniD3, DrugBank, IUPHAR/BPS Guide to Pharmacology, DrugCentral, CPIC |
-| 药物机制 | DRUGMECHDB |
-| 药品标签 | openFDA Human Drug, DailyMed, MedlinePlus Drug Info |
-| 药物本体 | RxNorm, ChEBI |
-| 药物重定位 | RepoDB |
-| 药物基因组学 | PharmGKB |
-| DDI | MecDDI, DDInter, KEGG Drug |
-| 患者评价 | WebMD Drug Reviews |
+| DTI (10) | ChEMBL, BindingDB, DGIdb, Open Targets Platform, TTD, STITCH, TarKG, GDKD, Molecular Targets, Molecular Targets Data |
+| ADR (4) | FAERS, SIDER, nSIDES, ADReCS |
+| 药物知识库 (8) | UniD3, DrugBank, IUPHAR/BPS, DrugCentral, CPIC, PharmKG, WHO Essential Medicines List, FDA Orange Book |
+| 药物机制 (1) | DRUGMECHDB |
+| 药品标签 (3) | openFDA Human Drug, DailyMed, MedlinePlus Drug Info |
+| 药物本体 (4) | RxNorm, ChEBI, ATC/DDD, NDF-RT |
+| 药物重定位 (6) | RepoDB, DRKG, OREGANO, Drug Repurposing Hub, DrugRepoBank, RepurposeDrugs |
+| 药物基因组学 (1) | PharmGKB |
+| DDI (3) | MecDDI, DDInter, KEGG Drug |
+| 药物毒性 (4) | UniTox, LiverTox, DILIrank, DILI |
+| 药物组合 (2) | DrugCombDB, DrugComb |
+| 药物分子性质 (1) | GDSC |
+| 药物-疾病 (1) | SemaTyP |
+| 患者评价 (2) | WebMD Drug Reviews, Drug Reviews (Drugs.com) |
+| 药物 NLP (7) | DDI Corpus 2013, DrugProt, ADE Corpus, CADEC, PsyTAR, TAC 2017 ADR, PHEE |
 
 另有 `WebSearch` 作为 DuckDuckGo + PubMed 风格的外部检索补充。
 

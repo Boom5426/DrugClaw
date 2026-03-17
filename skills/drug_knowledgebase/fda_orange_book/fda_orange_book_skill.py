@@ -32,6 +32,7 @@ class FDAOrangeBookSkill(RAGSkill):
     access_mode = AccessMode.REST_API
     aim = "Approved drug products"
     data_range = "FDA-approved drugs with bioequivalence and patent info"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

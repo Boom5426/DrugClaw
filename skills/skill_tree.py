@@ -1,9 +1,8 @@
 """
 Skill Tree for DrugClaw RAG retrieval.
 
-Organises all 68 LLM-friendly resources from 68DrugResources.xlsx into a
-15-subcategory tree so the RetrieverAgent can navigate to the right skills
-without scanning a flat list.
+Organises all 70 LLM-friendly resources into a 15-subcategory tree so the
+RetrieverAgent can navigate to the right skills without scanning a flat list.
 
 Tree layout (15 subcategories as top-level nodes → leaf skill nodes)
 -------------------------------------------------------------------
@@ -98,7 +97,7 @@ class _LegacyDomain:
 
 class SkillTree:
     """
-    15-subcategory skill tree covering all 68 LLM-friendly drug resources.
+    15-subcategory skill tree covering all 70 LLM-friendly drug resources.
 
     The tree is used by:
       - SkillRegistry.skill_tree_prompt   → full tree for the system prompt
@@ -151,7 +150,7 @@ class SkillTree:
         ○  = catalogued but not yet implemented
         """
         header = (
-            "=== DrugClaw Skill Tree (68 LLM-Friendly Drug Resources) ===\n"
+            "=== DrugClaw Skill Tree (70 LLM-Friendly Drug Resources) ===\n"
             "15 subcategories — navigate to the right one for your query.\n"
             "✓ = implemented & available   ○ = catalogued, not yet callable\n"
         )
@@ -221,7 +220,7 @@ class SkillTree:
 
 
 # ---------------------------------------------------------------------------
-# Tree data — all 68 resources from 68DrugResources.xlsx
+# Tree data — all 70 resources
 # ---------------------------------------------------------------------------
 
 def _build_subcategories() -> List[Subcategory]:
@@ -241,37 +240,37 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "ChEMBL", "Bioactivity reasoning",
                     "Drug–target IC50/Ki/EC50 across 14 000+ targets",
-                    access_mode="CLI",   # chembl_webresource_client
+                    access_mode="CLI", implemented=True,
                 ),
                 SkillNode(
                     "Open Targets Platform", "Drug-target evidence",
                     "Curated + machine-learning drug-target evidence scores",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "DGIdb", "Drug–gene interactions",
                     "Curated drug–gene interaction database (NCI, ClinVar, etc.)",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "TTD", "Therapeutic target database",
                     "Approved/clinical/experimental targets with drug linkages",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "BindingDB", "Binding affinity data",
                     "Experimentally measured binding constants (Ki, Kd, IC50)",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "TarKG", "Target knowledge graph",
                     "Drug-target KG linking targets to diseases via pathways",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "STITCH", "Drug–protein interactions",
                     "Chemical–protein interaction network (STRING extension)",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "PROMISCUOUS 2.0", "Drug polypharmacology",
@@ -281,12 +280,22 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "GDKD", "Genomics-drug knowledge",
                     "Genomics-Drug Knowledge Database from Synapse",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "DTC", "Drug target commons",
                     "Community-curated drug-target bioactivity database",
                     access_mode="LOCAL_FILE",
+                ),
+                SkillNode(
+                    "Molecular Targets", "Pediatric oncology targets (CCDI)",
+                    "NCI CCDI Molecular Targets Platform via GraphQL",
+                    access_mode="REST_API", implemented=True,
+                ),
+                SkillNode(
+                    "Molecular Targets Data", "NCI-60 protein expression",
+                    "Protein expression across NCI-60 cancer cell lines",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
             ],
         ),
@@ -305,17 +314,17 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "FAERS", "Post-market drug safety surveillance",
                     "FDA spontaneous adverse event reports (all marketed drugs)",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
                 SkillNode(
                     "SIDER", "Side effect resource",
                     "Drug–side-effect associations from package inserts",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "nSIDES", "Adverse drug effects (broad)",
                     "Off-label and on-label adverse effects via NLP on EHRs",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "VigiAccess", "WHO pharmacovigilance",
@@ -325,7 +334,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "ADReCS", "ADR classification system",
                     "Hierarchical adverse drug reaction classification",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
             ],
         ),
@@ -344,22 +353,22 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "UniD3", "Drug discovery knowledge graph",
                     "Multi-KG + drug-disease datasets from 150 000+ PubMed articles",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "DrugBank", "Comprehensive drug reference",
                     "Drug structures, pharmacology, targets, interactions",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "IUPHAR/BPS Guide to Pharmacology", "Pharmacology reference",
                     "Expert-curated targets, drugs, and pharmacological data",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "DrugCentral", "Drug information resource",
                     "FDA-approved drug information, indications, targets",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "Drugs.com", "Consumer drug information",
@@ -369,22 +378,22 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "PharmKG", "Pharmaceutical knowledge graph",
                     "Multi-relational drug KG (drug-gene-disease-pathway)",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "WHO Essential Medicines List", "Essential medicines",
                     "WHO list of essential medicines with therapeutic category",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "FDA Orange Book", "Approved drug products",
                     "FDA-approved drugs with bioequivalence and patent info",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "CPIC", "Clinical pharmacogenomics",
                     "CPIC guidelines linking genes/variants to drug dosing",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
             ],
         ),
@@ -403,7 +412,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "DRUGMECHDB", "Drug mechanism-of-action paths",
                     "Curated MoA paths linking drugs to diseases via biological graphs",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
             ],
         ),
@@ -422,12 +431,12 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "openFDA Human Drug", "FDA drug label search",
                     "Structured FDA drug labels (adverse events, dosing, warnings)",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "DailyMed", "Official drug labels (NIH)",
                     "FDA-approved drug labeling from NIH DailyMed",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "RxList Drug Descriptions", "Drug monographs",
@@ -437,7 +446,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "MedlinePlus Drug Info", "Patient drug information",
                     "NIH MedlinePlus drug information for patients and clinicians",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
             ],
         ),
@@ -456,22 +465,22 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "RxNorm", "Drug name normalization",
                     "NLM normalized drug names linking to NDC, RxCUI, and clinical concepts",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "ATC/DDD", "WHO drug classification",
                     "Anatomical Therapeutic Chemical classification + daily doses",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "NDF-RT", "National drug file taxonomy",
                     "VA National Drug File ontology of drug classes and roles",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "ChEBI", "Chemical entity ontology",
                     "Ontology of chemical entities with biological roles",
-                    access_mode="CLI",   # libchebipy
+                    access_mode="CLI", implemented=True,
                 ),
             ],
         ),
@@ -490,32 +499,32 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "RepoDB", "Drug repositioning outcomes",
                     "Labelled drug-disease repositioning pairs from clinical trials",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
                 SkillNode(
                     "OREGANO", "Drug repurposing candidates",
                     "Drug repurposing predictions with clinical evidence",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "DRKG", "Drug repurposing KG",
                     "Multi-relational KG integrating DrugBank, Hetionet, STRING, etc.",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "Drug Repurposing Hub", "Repurposing screening library",
                     "Broad-spectrum repurposing library with mechanism annotations",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "DrugRepoBank", "Repurposing repository",
                     "Curated drug repurposing data with clinical trial evidence",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "RepurposeDrugs", "Repurposing portal",
                     "Open drug repurposing portal with disease-drug associations",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "DrugRepurposing Online", "Repurposing predictions",
@@ -549,7 +558,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "PharmGKB", "Pharmacogenomics knowledge base",
                     "Curated PGx knowledge: variant-drug-outcome annotations",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
             ],
         ),
@@ -568,17 +577,17 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "MecDDI", "Mechanistic DDI database",
                     "DDI database with mechanistic explanations",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "DDInter", "DDI interaction database",
                     "Comprehensive DDI database with clinical evidence",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "KEGG Drug", "KEGG drug interactions",
                     "Drug-drug interactions from KEGG with pathway context",
-                    access_mode="CLI",   # bioservices
+                    access_mode="CLI", implemented=True,
                 ),
             ],
         ),
@@ -597,22 +606,22 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "UniTox", "Drug toxicity database",
                     "Large-scale drug toxicity database from clinical notes",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "LiverTox", "Drug-induced liver injury",
                     "NCBI LiverTox clinical descriptions of DILI by drug",
-                    access_mode="REST_API",
+                    access_mode="REST_API", implemented=True,
                 ),
                 SkillNode(
                     "DILIrank", "DILI severity ranking",
                     "FDA DILI severity ranking (most-DILI-concern to no-DILI-concern)",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "DILI", "DILI benchmark dataset",
                     "Drug-induced liver injury benchmark dataset (Xu et al.)",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
             ],
         ),
@@ -631,7 +640,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "DrugCombDB", "Drug combination database",
                     "Human/animal drug combination synergy/antagonism records",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "CDCDB", "Cancer drug combination",
@@ -641,7 +650,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "DrugComb", "Drug combination screening",
                     "Drug combination screening data across cancer cell lines",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
                 SkillNode(
                     "DCDB", "Drug combination reference",
@@ -665,7 +674,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "GDSC", "Genomics of drug sensitivity in cancer",
                     "Drug sensitivity (IC50) profiles across 1000+ cancer cell lines",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
             ],
         ),
@@ -684,7 +693,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "SemaTyP", "Semantic drug-disease KG",
                     "Drug-disease KG built from semantic types in biomedical literature",
-                    access_mode="LOCAL_FILE",
+                    access_mode="LOCAL_FILE", implemented=True,
                 ),
             ],
         ),
@@ -703,7 +712,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "WebMD Drug Reviews", "Patient drug reviews (WebMD)",
                     "362 000+ patient drug reviews from WebMD",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
                 SkillNode(
                     "askapatient", "Patient experience reports",
@@ -713,7 +722,7 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "Drug Reviews (Drugs.com)", "Drug reviews dataset",
                     "UCI/Drugs.com drug reviews with patient ratings",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
             ],
         ),
@@ -737,17 +746,17 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "DDI Corpus 2013", "DDI extraction corpus",
                     "Annotated DDI extraction corpus from drug labels/MEDLINE",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
                 SkillNode(
                     "DrugProt", "Drug-protein relation corpus",
                     "BioCreative VII drug-protein relation extraction corpus",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
                 SkillNode(
                     "ADE Corpus", "Adverse drug event corpus",
                     "Annotated adverse drug event corpus from case reports",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
                 SkillNode(
                     "n2c2 2018 Track 2", "Clinical NLP ADE corpus",
@@ -757,22 +766,22 @@ def _build_subcategories() -> List[Subcategory]:
                 SkillNode(
                     "CADEC", "Clinical ADE corpus",
                     "CSIRO annotated drug side-effect corpus from social media",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
                 SkillNode(
                     "PsyTAR", "Psychiatric drug ADE corpus",
                     "Annotated psychiatric drug adverse events from patient forums",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
                 SkillNode(
                     "TAC 2017 ADR", "TAC ADR extraction corpus",
                     "TAC 2017 adverse drug reaction extraction from labels",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
                 SkillNode(
                     "PHEE", "Pharmacovigilance event corpus",
                     "Pharmacovigilance event extraction corpus (EMNLP 2022)",
-                    access_mode="DATASET",
+                    access_mode="DATASET", implemented=True,
                 ),
             ],
         ),

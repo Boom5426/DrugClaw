@@ -37,6 +37,7 @@ class DDICorpusSkill(DatasetRAGSkill):
     access_mode = AccessMode.DATASET
     aim = "DDI extraction corpus"
     data_range = "Annotated DDI extraction corpus from drug labels/MEDLINE"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

@@ -41,6 +41,7 @@ class TAC2017ADRSkill(DatasetRAGSkill):
     access_mode = AccessMode.DATASET
     aim = "TAC ADR extraction corpus"
     data_range = "TAC 2017 adverse drug reaction extraction from FDA drug labels"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)

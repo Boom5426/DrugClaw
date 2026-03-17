@@ -35,6 +35,7 @@ class DRKGSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Drug repurposing KG"
     data_range = "Multi-relational KG integrating DrugBank, Hetionet, STRING, etc."
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

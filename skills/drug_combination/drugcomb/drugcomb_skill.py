@@ -37,6 +37,7 @@ class DrugCombSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Drug combination screening"
     data_range = "Drug combination screening data across cancer cell lines"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

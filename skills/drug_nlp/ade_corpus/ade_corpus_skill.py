@@ -38,6 +38,7 @@ class ADECorpusSkill(DatasetRAGSkill):
     access_mode = AccessMode.DATASET
     aim = "Adverse drug event corpus"
     data_range = "Annotated adverse drug event corpus from case reports"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

@@ -37,6 +37,7 @@ class RepurposeDrugsSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Repurposing portal"
     data_range = "Open drug repurposing portal with disease-drug associations"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

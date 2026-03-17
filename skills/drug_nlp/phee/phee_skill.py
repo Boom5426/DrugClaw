@@ -41,6 +41,7 @@ class PHEESkill(DatasetRAGSkill):
     access_mode = AccessMode.DATASET
     aim = "Pharmacovigilance event corpus"
     data_range = "Pharmacovigilance event extraction corpus (EMNLP 2022)"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)

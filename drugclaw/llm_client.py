@@ -1,12 +1,13 @@
 """
-LLM client wrapper for OpenAI-compatible Navigator API
+LLM client wrapper — compatible with OpenAI, LLaMA (via vLLM/Ollama), and
+any OpenAI-compatible API endpoint.
 """
 import openai
 from typing import List, Dict, Any, Optional
 import json
 
 class LLMClient:
-    """Wrapper for OpenAI-compatible LLM API."""
+    """Wrapper for OpenAI-compatible LLM API (OpenAI, LLaMA/vLLM, Ollama, etc.)."""
     
     def __init__(self, config):
         """Initialize LLM client with configuration"""

@@ -36,6 +36,7 @@ class PharmKGSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Pharmaceutical knowledge graph"
     data_range = "Multi-relational drug KG (drug-gene-disease-pathway)"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

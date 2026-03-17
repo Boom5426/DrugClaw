@@ -38,6 +38,7 @@ class DrugRepoBankSkill(RAGSkill):
     access_mode = AccessMode.LOCAL_FILE
     aim = "Repurposing repository"
     data_range = "Curated drug repurposing data with clinical trial evidence"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

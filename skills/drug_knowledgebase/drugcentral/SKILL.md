@@ -27,7 +27,7 @@ Download from <https://drugcentral.org/download>:
 | `drug.target.interaction.tsv` | Drug-target interaction profiles (gene, action, potency) | Recommended |
 | `FDA+EMA+PMDA_Approved.csv` | Approval status (ID, drug_name) | Optional |
 
-Place files in `DATA_DIR` (default: `resources_metadata/drug_knowledgebase/DrugCentral`, or set env `DRUGCENTRAL_DIR`).
+Place files in `DATA_DIR` (default: `/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/drug_knowledgebase/DrugCentral`, or set env `DRUGCENTRAL_DIR`).
 
 ## API
 

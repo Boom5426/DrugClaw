@@ -39,4 +39,4 @@ See `if __name__ == "__main__"` block in `10_WebMD_Drug_Reviews.py` for runnable
 - **Columns**: `Drug`, `Condition`, `Reviews`, `Side`, `Age`, `Sex`, `Effectiveness`, `EaseofUse`, `Satisfaction`
 - **Ratings**: 1-5 star scale for Effectiveness, EaseofUse, Satisfaction
 - **Path**: `DATA_PATH` variable in `10_WebMD_Drug_Reviews.py`
-  (`resources_metadata/drug_review/WebMDDrugReviews/webmd.csv`)
+  (`/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/drug_review/WebMDDrugReviews/webmd.csv`)

@@ -41,6 +41,7 @@ class ADReCSSkill(RAGSkill):
     access_mode = AccessMode.REST_API
     aim = "ADR classification system"
     data_range = "Hierarchical adverse drug reaction classification"
+    _implemented = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)

@@ -17,7 +17,7 @@ Search local DrugBank data by any entity. Auto-detects query type:
 
 ## Data
 
-- **Base dir**: `resources_metadata/drug_knowledgebase/DrugBank/`
+- **Base dir**: `/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/drug_knowledgebase/DrugBank/`
 - **Files**:
   - `full database.xml` — rich fields: description, targets, interactions, categories, synonyms, groups
   - `drugbank vocabulary.csv` — lightweight: DrugBank ID, name, CAS, synonyms
