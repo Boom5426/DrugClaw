@@ -1,54 +1,54 @@
 ---
-name: drugrepobank-query
+name: DrugRepoBank-query
 description: >
-  Query or inspect the DrugRepoBank - Drug Repurposing Evidence Compilation resource for drug-centric tasks with emphasis on drug repurposing Use whenever Codex needs the calling pattern, downloadable entrypoint, or example query flow from this skill example script.
+  Query the DrugRepoBank drug repurposing evidence database. Use whenever the
+  user asks about repurposing candidates, drug–disease–target repurposing
+  evidence, or wants to look up any entity (drug name, DrugBank ID, ChEMBL ID,
+  PubChem CID, TTD target ID, UniProt ID, disease name) in DrugRepoBank.
 ---
 
-# DrugRepoBank - Drug Repurposing Evidence Compilation
+# DrugRepoBank Query Skill
 
-Use this file as the compact operator guide for the paired `skillexamples` script.
-Prefer reading the Python example itself for exact request parameters, field names,
-and response handling.
+Search four linked tables (Drug, Target, DrugTargetInteraction, Literature)
+for repurposing evidence. Auto-detects entity type by prefix:
 
-## Paired Example
+| Input Pattern | Detected As | Example |
+|---|---|---|
+| `DB00945` | DrugBank ID | exact on `DrugBank_ID` / `DrugID` |
+| `T47101` | TTD Target ID | exact on `TargetID` |
+| `FGFR1_HUMAN` | UniProt ID | exact on `UniprotID` |
+| `CHEMBL2103749` | ChEMBL ID | exact on `ChEMBL ID` in Drug table |
+| `16129704` (digits) | PubChem CID | exact on `PubChem_Compound_ID` / `PubChemID` |
+| anything else | free text | substring on drug Name, TargetName, Disease, NewDisease |
 
-- Script: `42_DrugRepoBank.py`
-- Category: `Drug-centric`
-- Type: `DB`
-- Subcategory: `Drug Repurposing`
+## API
 
-## API Surface
-
-| Function | Purpose |
-|---|---|
-| `search_repurposing_candidates()` | See `42_DrugRepoBank.py` for exact input/output behavior. |
-| `download_database()` | See `42_DrugRepoBank.py` for exact input/output behavior. |
+| Function | Input | Returns |
+|---|---|---|
+| `load_all()` | — | `dict` with keys `drug`, `dti`, `lit`, `target` (lists of row-dicts) |
+| `search(tables, entity)` | tables dict + single entity string | `dict` with keys `entity`, `entity_type`, `drug`, `target`, `dti`, `literature` |
+| `search_batch(tables, entities)` | tables dict + list of entity strings | `dict[str, search_result]` |
+| `summarize(result)` | single `search()` result | compact one-line LLM-readable text |
+| `to_json(result)` | single `search()` result | JSON string (trimmed heavy fields) |
 
 ## Usage
 
-Read `42_DrugRepoBank.py` and copy its call pattern when writing Code Agent query code.
-Keep network timeouts short and preserve the script's native access method
-(REST, direct download, local file scan, or HTML scraping).
+See `if __name__ == "__main__"` block in `42_DrugRepoBank.py` for runnable
+examples covering: drug name, DrugBank ID, TTD target ID, UniProt ID, ChEMBL
+ID, disease free-text, batch search, and JSON output.
 
-## Validation
+## Data
 
-- Validation script: `tools/test_skill_42_drugrepobank.py`
-- Run: `python tools/test_skill_42_drugrepobank.py`
-- Runtime import: `from skills.drug_repurposing.drugrepobank import DrugRepoBankSkill`
+Four CSV tables in `DATA_DIR`:
 
-## Notes
+| File | Key Columns | Description |
+|---|---|---|
+| `Drug.csv` | DrugBank_ID, Name, Drug Groups, PubChem_Compound_ID, ChEMBL ID, SMILES | Drug identifiers & structures |
+| `DrugTargetInteraction.csv` | UniprotID, PubchemID, TargetID, DrugID, Highest_status, MOA | Drug–target links with mechanism of action |
+| `Literature.csv` | DrugName, DrugID, Target, Disease, NewDisease, Evidence, Insilico, Invitro, Invivo, Clinicaltrial, PMID | Repurposing evidence & literature references |
+| `Targets.csv` | TargetID, UniprotID, TargetName, TargetGeneName, TargetType, Function | Target annotations & pathway memberships |
 
-- Review `if __name__ == "__main__"` in `42_DrugRepoBank.py` first when generating runnable query code.
-- Primary link from the example: <https://awi.cuhk.edu.cn/DrugRepoBank/php/index.php>
-- Reference paper from the example: <https://academic.oup.com/database/article/doi/10.1093/database/baae051/7712639>
-- The validation script currently checks:
-- import DrugRepoBankSkill
-- call is_available()
-- standard query: drug=imatinib
-- edge query: drug=zzz_not_a_real_drug_zzz
-- validate evidence_text and metadata
-
-## Data Source
-
-- <https://awi.cuhk.edu.cn/DrugRepoBank/php/index.php>
-- <https://academic.oup.com/database/article/doi/10.1093/database/baae051/7712639>
+- **Path**: `DATA_DIR` variable in `42_DrugRepoBank.py`  
+  (`/blue/qsong1/wang.qing/AgentLLM/Survey100/resources_metadata/drug_repurposing/DrugRepoBank`)
+- **Source**: https://awi.cuhk.edu.cn/DrugRepoBank/php/index.php
+- **Paper**: Huang et al., *Database* 2024, baae051. DOI:10.1093/database/baae051

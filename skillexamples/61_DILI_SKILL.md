@@ -1,57 +1,92 @@
----
-name: dili-query
-description: >
-  Query or inspect the DILI - Drug-Induced Liver Injury Dataset from ChEMBL resource for drug-centric tasks with emphasis on drug toxicity Use whenever Codex needs the calling pattern, downloadable entrypoint, or example query flow from this skill example script.
----
+# 61_DILI — Drug-Induced Liver Injury (DILIrank 2.0 & DILIst)
 
-# DILI - Drug-Induced Liver Injury Dataset from ChEMBL
+## Overview
 
-Use this file as the compact operator guide for the paired `skillexamples` script.
-Prefer reading the Python example itself for exact request parameters, field names,
-and response handling.
-
-## Paired Example
-
-- Script: `61_DILI.py`
-- Category: `Drug-centric`
-- Type: `Dataset`
-- Subcategory: `Drug Toxicity`
-
-## API Surface
-
-| Function | Purpose |
+| Field | Value |
 |---|---|
-| `get_dili_compounds_from_chembl()` | See `61_DILI.py` for exact input/output behavior. |
-| `get_hepatotoxicity_assays()` | See `61_DILI.py` for exact input/output behavior. |
-| `download_supplement_data()` | See `61_DILI.py` for exact input/output behavior. |
+| Category | Drug-centric |
+| Subcategory | Drug Toxicity |
+| Source | FDA Liver Toxicity Knowledge Base (LTKB) |
+| Datasets | **DILIrank 2.0** – severity classification; **DILIst** – extended annotations |
+| URL | <https://www.fda.gov/science-research/liver-toxicity-knowledge-base-ltkb/drug-induced-liver-injury-rank-dilirank-20-dataset> |
+
+**DILIrank** classifies drugs into four DILI concern levels:
+
+- **Most-DILI-Concern** — strong evidence of causing liver injury
+- **Less-DILI-Concern** — weaker or limited evidence
+- **No-DILI-Concern** — no significant DILI evidence
+- **Ambiguous** — conflicting or insufficient data
+
+## File Layout
+
+```
+DATA_DIR/
+  ├── DILIrank*.xlsx   # DILIrank dataset (one or more sheets)
+  └── DILIst*.xlsx     # DILIst dataset (one or more sheets)
+```
+
+Default `DATA_DIR`:
+```
+/blue/qsong1/wang.qing/AgentLLM/Survey100/resources_metadata/drug_toxicity/DILI
+```
+
+Override via environment variable: `export DILI_DATA_DIR=/your/path`
+
+## Dependencies
+
+```bash
+conda install openpyxl   # or: pip install openpyxl
+# pandas is also required (usually already installed)
+```
 
 ## Usage
 
-Read `61_DILI.py` and copy its call pattern when writing Code Agent query code.
-Keep network timeouts short and preserve the script's native access method
-(REST, direct download, local file scan, or HTML scraping).
+### CLI
 
-## Validation
+```bash
+# Run default examples (acetaminophen, isoniazid, troglitazone)
+python 61_DILI.py
+```
 
-- Validation script: `tools/test_skill_61_dili.py`
-- Run: `python tools/test_skill_61_dili.py`
-- Runtime import: `from skills.drug_toxicity.dili import DILISkill`
+### Python API
 
-## Notes
+```python
+from importlib.machinery import SourceFileLoader
+mod = SourceFileLoader("dili", "61_DILI.py").load_module()
 
-- Review `if __name__ == "__main__"` in `61_DILI.py` first when generating runnable query code.
-- Primary link from the example: <https://doi.org/10.1021/acs.chemrestox.0c00296>
-- Reference paper from the example: <https://doi.org/10.1021/acs.chemrestox.0c00296>
-- The validation script currently checks:
-- read dili_skill.py
-- read README.md
-- read skillexamples/61_DILI.py
-- import DILISkill
-- instantiate DILISkill(timeout=20)
-- call is_available()
-- standard query 1: drug=imatinib
-- standard query 2: drug=acetaminophen
+# Single entity
+results = mod.query_dili("acetaminophen")
 
-## Data Source
+# Multiple entities
+results = mod.query_dili(["isoniazid", "troglitazone"])
+```
 
-- <https://doi.org/10.1021/acs.chemrestox.0c00296>
+### Return Format
+
+```json
+[
+  {
+    "source": "DILIrank_2.0.xlsx",
+    "match_count": 1,
+    "matches": [
+      {
+        "Compound Name": "Acetaminophen",
+        "DILI Concern": "Most-DILI-Concern",
+        "...": "..."
+      }
+    ]
+  }
+]
+```
+
+- Returns an empty list when no matches are found.
+- Returns `{"error": "..."}` if the data directory is missing or empty.
+
+### LLM Integration Example
+
+```text
+User:  "Is troglitazone associated with liver injury?"
+Agent: calls query_dili("troglitazone")
+       → source: DILIrank_2.0.xlsx, DILI Concern: Most-DILI-Concern
+       → "Yes — troglitazone is classified as Most-DILI-Concern in the FDA DILIrank dataset."
+```

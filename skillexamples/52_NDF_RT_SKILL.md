@@ -1,50 +1,67 @@
 ---
-name: ndf-rt-query
+name: 52_NDF_RT
 description: >
-  Query or inspect the NDF-RT - National Drug File Reference Terminology resource for drug-centric tasks with emphasis on drug ontology/terminology Use whenever Codex needs the calling pattern, downloadable entrypoint, or example query flow from this skill example script.
+  Query NDF-RT (National Drug File Reference Terminology) via the NCI EVS REST
+  API. Use when looking up drug mechanisms of action, physiological effects,
+  pharmacologic classes, chemical structures, or drug–disease relationships
+  (may_treat / may_prevent) in NDF-RT. Accepts drug names or NDF-RT codes.
 ---
 
-# NDF-RT - National Drug File Reference Terminology
+# NDF-RT Query Skill
 
-Use this file as the compact operator guide for the paired `skillexamples` script.
-Prefer reading the Python example itself for exact request parameters, field names,
-and response handling.
+Search NDF-RT concepts by drug name or NDF-RT code via the NCI EVS REST API.
+Auto-detects entity type by pattern:
 
-## Paired Example
+| Input Pattern | Detected As | Lookup Logic |
+|---|---|---|
+| `N0000145918` | NDF-RT code (`N` + 10 digits) | direct concept GET |
+| anything else | free text | full-text search endpoint |
 
-- Script: `52_NDF_RT.py`
-- Category: `Drug-centric`
-- Type: `KG`
-- Subcategory: `Drug Ontology/Terminology`
+## API
 
-## API Surface
+| Function | Input | Returns |
+|---|---|---|
+| `search(entity, limit)` | single entity string | `dict` with `entity`, `type`, `results` |
+| `search_batch(entities, limit)` | list of entity strings | `dict[str, dict]` |
+| `summarize(result, entity)` | search result dict + label | compact multi-line text |
+| `to_json(result)` | search result dict | `list[dict]` |
 
-| Function | Purpose |
+### Result dict structure
+
+Each item in `results` contains:
+
+| Key | Description |
 |---|---|
-| `search_ndfrt()` | See `52_NDF_RT.py` for exact input/output behavior. |
-| `get_concept()` | See `52_NDF_RT.py` for exact input/output behavior. |
-| `get_concept_children()` | See `52_NDF_RT.py` for exact input/output behavior. |
-| `get_all_roots()` | See `52_NDF_RT.py` for exact input/output behavior. |
+| `code` | NDF-RT concept code |
+| `name` | Preferred concept name |
+| `kind` | Concept kind (e.g. `DRUG_KIND`, `DISEASE_KIND`) |
+| `properties` | flat `{type: value}` property dict |
+| `roles` | list of `{type, relatedCode, relatedName}` role relationships |
+| `parents` | list of `{code, name}` ISA parent concepts |
+| `synonyms` | deduplicated list of synonym strings |
+
+### Key NDF-RT relationship types (roles)
+
+| Role | Meaning |
+|---|---|
+| `has_MoA` | mechanism of action |
+| `has_PE` | physiological effect |
+| `has_EPC` | established pharmacologic class |
+| `may_treat` | indicated disease/condition |
+| `may_prevent` | preventable disease/condition |
+| `CI_with` | contraindicated with |
+| `has_Chemical_Structure` | chemical structure classification |
 
 ## Usage
 
-Read `52_NDF_RT.py` and copy its call pattern when writing Code Agent query code.
-Keep network timeouts short and preserve the script's native access method
-(REST, direct download, local file scan, or HTML scraping).
+See `if __name__ == "__main__"` block in `52_NDF_RT.py` for runnable examples
+covering: drug name search, code lookup, batch search, JSON output, and root
+concept listing.
 
-## Validation
+## Data
 
-- Validation script: `tools/test_skill_52_ndfrt.py`
-- Run: `python tools/test_skill_52_ndfrt.py`
-- Runtime import: `from skills.drug_ontology.ndfrt.ndfrt_skill import NDFRTSkill`
-
-## Notes
-
-- Review `if __name__ == "__main__"` in `52_NDF_RT.py` first when generating runnable query code.
-- Primary link from the example: <https://evsexplore.semantics.cancer.gov/evsexplore/welcome?terminology=ndfrt>
-- Inspect the validation script directly for its current assertions and sample entities.
-
-## Data Source
-
-- <https://evsexplore.semantics.cancer.gov/evsexplore/welcome?terminology=ndfrt>
-- <https://api-evsrest.nci.nih.gov/api/v1>
+- **Source**: NCI EVS REST API (`https://api-evsrest.nci.nih.gov/api/v1`)
+- **Terminology**: `ndfrt`
+- **Auth**: none required
+- **Rate limits**: not documented; use reasonable request spacing
+- **Maintainer**: U.S. Department of Veterans Affairs / NCI Enterprise Vocabulary Services

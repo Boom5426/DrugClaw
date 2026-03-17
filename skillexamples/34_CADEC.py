@@ -1,67 +1,168 @@
 """
-CADEC - CSIRO Adverse Drug Event Corpus
+34_CADEC.py – Query the CADEC (CSIRO Adverse Drug Event Corpus)
 Category: Drug-centric | Type: Dataset | Subcategory: Drug NLP/Text Mining
-Link: https://data.csiro.au/collection/csiro:10948
-Paper: https://www.sciencedirect.com/science/article/pii/S1532046415000532
+Source : https://data.csiro.au/collection/csiro:10948
 
-CADEC is annotated with adverse drug event mentions extracted from patient
-forum posts (AskaPatient.com), enabling NLP research on consumer health text.
-
-Access method:
-  1. CSIRO Data Access Portal: https://data.csiro.au/collection/csiro:10948
-     (requires free registration)
-  2. HuggingFace mirror: https://huggingface.co/datasets/bigbio/cadec
-
-This script uses the HuggingFace version (no registration required).
+Provides search / search_batch / summarize / to_json over a pre-built
+cadec_combined.json (produced by build_cadec_json.py from BRAT files).
 """
 
+import json, os, re
 
-def load_cadec_from_huggingface():
-    """Load CADEC via HuggingFace datasets library."""
-    try:
-        from datasets import load_dataset
-        print("Loading CADEC from HuggingFace (bigbio/cadec) ...")
-        dataset = load_dataset("bigbio/cadec",
-                               name="cadec_bigbio_kb",
-                               trust_remote_code=True)
-        print(f"Splits: {list(dataset.keys())}")
-        train = dataset["train"]
-        print(f"Train examples: {len(train)}")
-        example = train[0]
-        print(f"\nFirst example ID: {example['id']}")
-        passages = example.get("passages", [])
-        for p in passages[:1]:
-            print(f"  Text snippet: {p.get('text', [''])[0][:200]}")
-        entities = example.get("entities", [])
-        print(f"\nEntities ({len(entities)} total):")
-        for ent in entities[:5]:
-            print(f"  Type: {ent.get('type')} | "
-                  f"Text: {ent.get('text', [''])[0][:50]}")
-        return dataset
-    except ImportError:
-        print("Install HuggingFace datasets: pip install datasets")
-        return None
-    except Exception as e:
-        print(f"Error loading CADEC: {e}")
-        print("Try loading without bigbio schema:")
-        print("  ds = load_dataset('bigbio/cadec')")
-        return None
+DATA_PATH = "/blue/qsong1/wang.qing/AgentLLM/Survey100/resources_metadata/drug_nlp/CADEC/data/cadec/cadec_combined.json"
+
+# ── data loading ─────────────────────────────────────────────────────
+
+_data = None
+
+def load_cadec(path=DATA_PATH):
+    """Load cadec_combined.json → list[dict].  Cached after first call."""
+    global _data
+    if _data is not None:
+        return _data
+    with open(path, encoding="utf-8") as f:
+        _data = json.load(f)
+    return _data
+
+# ── entity type detection ────────────────────────────────────────────
+
+_MEDDRA_RE  = re.compile(r"^\d{8}$")          # 8-digit MedDRA code
+_SCT_RE     = re.compile(r"^\d{6,18}$")       # 6-18 digit SNOMED CT
+_DOCID_RE   = re.compile(r"^[A-Z0-9_.]+$", re.I)  # e.g. LIPITOR.1
+
+def _detect(entity):
+    e = entity.strip()
+    if _MEDDRA_RE.match(e):
+        return "meddra_code"
+    if _SCT_RE.match(e):
+        return "sct_code"
+    return "text"
+
+# ── search ───────────────────────────────────────────────────────────
+
+def search(entity, data=None):
+    """Search CADEC for a single entity.
+
+    Auto-detects input type:
+      - 8-digit number  → MedDRA code lookup
+      - 6-18 digit number → SNOMED CT code lookup
+      - free text → substring match on entity text, type, or document text
+
+    Returns list[dict] of matching annotation records.
+    Each record: {doc_id, entity_id, type, text, start, end,
+                  normalizations, doc_snippet}
+    """
+    if data is None:
+        data = load_cadec()
+    e = entity.strip()
+    etype = _detect(e)
+    hits = []
+
+    for doc in data:
+        doc_id = doc["doc_id"]
+        full_text = doc["text"]
+        for ent in doc["entities"]:
+            matched = False
+            if etype == "meddra_code":
+                for n in ent.get("normalizations", []):
+                    if n["code"] == e and n["resource"].upper().startswith("MEDDRA"):
+                        matched = True; break
+            elif etype == "sct_code":
+                for n in ent.get("normalizations", []):
+                    if n["code"] == e and n["resource"].upper().startswith("SCT"):
+                        matched = True; break
+            else:  # free text
+                el = e.lower()
+                if (el in ent.get("text", "").lower()
+                    or el in ent.get("type", "").lower()):
+                    matched = True
+                # also match doc_id (e.g. "LIPITOR")
+                if not matched and el in doc_id.lower():
+                    matched = True
+
+            if matched:
+                snippet_start = max(0, ent["start"] - 40)
+                snippet_end   = min(len(full_text), ent["end"] + 40)
+                hits.append({
+                    "doc_id":          doc_id,
+                    "entity_id":       ent["id"],
+                    "type":            ent["type"],
+                    "text":            ent["text"],
+                    "start":           ent["start"],
+                    "end":             ent["end"],
+                    "normalizations":  ent.get("normalizations", []),
+                    "doc_snippet":     full_text[snippet_start:snippet_end].replace("\n", " ")
+                })
+    return hits
 
 
-def describe_cadec():
-    print("=== CADEC Dataset Schema ===")
-    print("Source: AskaPatient.com patient forum posts")
-    print("Annotation types:")
-    print("  - ADR (Adverse Drug Reaction)")
-    print("  - Drug (medication mentions)")
-    print("  - Disease (condition mentions)")
-    print("  - Symptom")
-    print("  - Finding")
-    print("Normalization: MedDRA for ADRs, AMT for drugs")
-    print("\nStats: ~1,250 posts, ~7,600 annotations")
+def search_batch(entities, data=None):
+    """Search CADEC for a list of entities.
+    Returns dict[str, list[dict]]."""
+    if data is None:
+        data = load_cadec()
+    return {e: search(e, data) for e in entities}
 
+# ── output helpers ───────────────────────────────────────────────────
+
+def summarize(hits, entity=""):
+    """Compact text summary for LLM consumption."""
+    if not hits:
+        return f"No CADEC results for '{entity}'."
+    lines = [f"CADEC results for '{entity}': {len(hits)} hit(s)"]
+    seen = set()
+    for h in hits:
+        key = (h["doc_id"], h["entity_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        norms = ", ".join(
+            f"{n['resource']}:{n['code']}({n['preferred_term']})"
+            for n in h["normalizations"]
+        ) or "none"
+        lines.append(
+            f"  [{h['type']}] \"{h['text']}\" "
+            f"(doc={h['doc_id']}, norm={norms}) "
+            f"ctx=\"...{h['doc_snippet']}...\""
+        )
+        if len(seen) >= 20:
+            lines.append(f"  ... and {len(hits)-20} more")
+            break
+    return "\n".join(lines)
+
+
+def to_json(hits):
+    """Return hits as a JSON-serialisable list[dict]."""
+    return hits
+
+
+# ── main demo ────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    describe_cadec()
+    data = load_cadec()
+    print(f"Loaded {len(data)} documents from CADEC\n")
+
+    # --- single entity: drug name ---
+    h = search("lipitor", data)
+    print(summarize(h, "lipitor"))
     print()
-    load_cadec_from_huggingface()
+
+    # --- single entity: ADR text ---
+    h = search("headache", data)
+    print(summarize(h, "headache"))
+    print()
+
+    # --- single entity: MedDRA code ---
+    h = search("10019211", data)
+    print(summarize(h, "10019211"))
+    print()
+
+    # --- batch search ---
+    results = search_batch(["lipitor", "nausea", "diclofenac"], data)
+    for ent, hits in results.items():
+        print(f"{ent}: {len(hits)} hit(s)")
+    print()
+
+    # --- JSON output ---
+    h = search("lipitor", data)
+    print(f"to_json sample (first record): {json.dumps(to_json(h)[:1], indent=2)}")

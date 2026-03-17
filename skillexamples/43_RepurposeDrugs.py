@@ -1,91 +1,148 @@
 """
-RepurposeDrugs - Drug Repurposing Opportunities Database
-Category: Drug-centric | Type: DB | Subcategory: Drug Repurposing
-Link: https://repurposedrugs.org/
-Paper: https://academic.oup.com/bib/article/25/4/bbae328/7709763
+Skill 16 – RepurposeDrugs (single-agent monotherapy dataset)
+Query drug-disease repurposing associations from the RepurposeDrugs database.
 
-RepurposeDrugs.org is a curated portal documenting drug repurposing
-opportunities with supporting evidence from trials and literature.
+Data source
+-----------
+Ianevski A et al. "RepurposeDrugs: an interactive web-portal and predictive
+platform for repurposing mono- and combination therapies."
+Briefings in Bioinformatics, 2024.  https://repurposedrugs.org/
 
-Access method: Download from the website or via direct data files.
+Local file: dataset_single.xlsx
+Columns: Drug_name | Disease_name | Phase | Merged_RefNew
 """
 
-import urllib.request
-import urllib.parse
-import os
-import csv
+from __future__ import annotations
 
-BASE_URL = "https://repurposedrugs.org"
-OUTPUT_DIR = "RepurposeDrugs"
+import re
+import json
+from typing import Optional
+
+import pandas as pd
+
+# ── data path (HPC absolute) ────────────────────────────────────────────────
+DATA_PATH = (
+    "/blue/qsong1/wang.qing/AgentLLM/Survey100/"
+    "resources_metadata/drug_repurposing/RepurposeDrugs/dataset_single.xlsx"
+)
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+_NCT_RE = re.compile(r"NCT\d{5,}", re.IGNORECASE)
 
 
-def search_repurposed_drugs(drug_name: str = "", disease: str = "") -> str:
+def _extract_ncts(url: Optional[str]) -> list[str]:
+    """Pull all NCT IDs from a Merged_RefNew URL string."""
+    if not isinstance(url, str):
+        return []
+    return _NCT_RE.findall(url)
+
+
+# ── core API ─────────────────────────────────────────────────────────────────
+
+def load_data(path: str = DATA_PATH) -> pd.DataFrame:
+    """Load dataset_single.xlsx into a DataFrame.
+
+    Adds a derived ``NCT_IDs`` column (list of NCT identifiers parsed from
+    the Merged_RefNew URL).
     """
-    Query RepurposeDrugs.org search endpoint.
-    Returns raw HTML/JSON response.
+    df = pd.read_excel(path)
+    df.columns = df.columns.str.strip()
+    df["NCT_IDs"] = df["Merged_RefNew"].apply(_extract_ncts)
+    return df
+
+
+def search(df: pd.DataFrame, entity: str) -> pd.DataFrame:
+    """Search for a single entity.  Auto-detects query type:
+
+    * ``NCT\\d+``       → match inside NCT_IDs list
+    * ``\\d`` only      → treated as phase number (1-4)
+    * anything else     → case-insensitive substring on Drug_name OR Disease_name
     """
-    params = {}
-    if drug_name:
-        params["drug"] = drug_name
-    if disease:
-        params["disease"] = disease
-    query_str = urllib.parse.urlencode(params)
-    url = f"{BASE_URL}/search?{query_str}" if query_str else f"{BASE_URL}/"
-    print(f"GET {url}")
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+    e = entity.strip()
+    if not e:
+        return df.iloc[0:0]
+
+    # NCT ID
+    if re.match(r"^NCT\d+$", e, re.IGNORECASE):
+        mask = df["NCT_IDs"].apply(lambda ids: e.upper() in [i.upper() for i in ids])
+        return df.loc[mask].copy()
+
+    # Phase number
+    if re.match(r"^[1-4]$", e):
+        return df.loc[df["Phase"].astype(str) == e].copy()
+
+    # Free-text (drug or disease name)
+    pat = re.escape(e).replace(r"\ ", ".*")
+    mask_drug = df["Drug_name"].str.contains(pat, case=False, na=False)
+    mask_dis = df["Disease_name"].str.contains(pat, case=False, na=False)
+    return df.loc[mask_drug | mask_dis].copy()
 
 
-def download_dataset():
-    """Download RepurposeDrugs dataset."""
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    # Try common download paths
-    urls = [
-        f"{BASE_URL}/download/repurposedrugs_data.csv",
-        f"{BASE_URL}/static/data/repurposedrugs.csv",
-        f"{BASE_URL}/data/download",
-    ]
-    for url in urls:
-        fname = os.path.join(OUTPUT_DIR, "repurposedrugs.csv")
-        print(f"Trying: {url} ...")
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                content = resp.read()
-                with open(fname, "wb") as f:
-                    f.write(content)
-            print(f"  Saved to {fname}")
-            return fname
-        except Exception as e:
-            print(f"  Failed: {e}")
-    return None
+def search_batch(df: pd.DataFrame, entities: list[str]) -> dict[str, pd.DataFrame]:
+    """Search for multiple entities. Returns ``{entity: DataFrame}``."""
+    return {e: search(df, e) for e in entities}
 
+
+def summarize(hits: pd.DataFrame, entity: str = "") -> str:
+    """Return an LLM-readable compact summary string.
+
+    Format per row:  ``DRUG → DISEASE (Phase N) [NCTxxxxxxxx, …]``
+    """
+    if hits.empty:
+        return f"No results for '{entity}'." if entity else "No results."
+
+    lines: list[str] = []
+    if entity:
+        lines.append(f"== {entity}: {len(hits)} association(s) ==")
+    for _, r in hits.iterrows():
+        ncts = ", ".join(r["NCT_IDs"]) if r["NCT_IDs"] else "no NCT"
+        lines.append(f"{r['Drug_name']} → {r['Disease_name']} (Phase {r['Phase']}) [{ncts}]")
+    return "\n".join(lines)
+
+
+def to_json(hits: pd.DataFrame) -> list[dict]:
+    """Convert hit rows to a list of plain dicts (JSON-serialisable)."""
+    out = []
+    for _, r in hits.iterrows():
+        out.append({
+            "drug_name": r["Drug_name"],
+            "disease_name": r["Disease_name"],
+            "phase": int(r["Phase"]) if pd.notna(r["Phase"]) else None,
+            "nct_ids": r["NCT_IDs"],
+            "ref_url": r.get("Merged_RefNew", ""),
+        })
+    return out
+
+
+# ── runnable examples ────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("=== RepurposeDrugs: Homepage check ===")
-    try:
-        content = search_repurposed_drugs()
-        print(f"Page loaded ({len(content)} bytes).")
-        if "repurpos" in content.lower():
-            print("Confirmed: RepurposeDrugs content detected.")
-    except Exception as e:
-        print(f"Error: {e}")
+    df = load_data()
+    print(f"Loaded {len(df)} rows, {df['Drug_name'].nunique()} unique drugs, "
+          f"{df['Disease_name'].nunique()} unique diseases.\n")
 
-    print("\n=== Attempting dataset download ===")
-    fpath = download_dataset()
-    if fpath and os.path.exists(fpath):
-        with open(fpath, newline="", encoding="utf-8", errors="replace") as f:
-            reader = csv.reader(f)
-            for i, row in enumerate(reader):
-                if i >= 5:
-                    break
-                print(f"  {row}")
-    else:
-        print(
-            "\nVisit https://repurposedrugs.org/ to access the database.\n"
-            "The database includes:\n"
-            "  - Original drug indication\n"
-            "  - New repurposing indication\n"
-            "  - Clinical phase, evidence level, references"
-        )
+    # 1. Single drug name
+    hits = search(df, "aspirin")
+    print(summarize(hits, "aspirin"))
+    print()
+
+    # 2. Single disease name
+    hits = search(df, "Pulmonary Hypertension")
+    print(summarize(hits, "Pulmonary Hypertension"))
+    print()
+
+    # 3. NCT ID lookup
+    hits = search(df, "NCT01856868")
+    print(summarize(hits, "NCT01856868"))
+    print()
+
+    # 4. Batch search
+    results = search_batch(df, ["metformin", "semaglutide", "Friedreich Ataxia"])
+    for ent, h in results.items():
+        print(summarize(h, ent))
+        print()
+
+    # 5. JSON output
+    hits = search(df, "(-)-Epicatechin")
+    print(json.dumps(to_json(hits), indent=2))

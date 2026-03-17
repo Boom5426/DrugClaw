@@ -1,64 +1,63 @@
 ---
 name: stitch-query
 description: >
-  Query or inspect the 45_STITCH — Search Tool for Interactions of Chemicals resource for drug-centric tasks with emphasis on drug-target interaction (dti) Use whenever Codex needs the calling pattern, downloadable entrypoint, or example query flow from this skill example script.
+  Query the STITCH chemical-protein interaction database. Use whenever the user
+  asks about chemical-protein interactions, drug-target binding, compound action
+  modes, or wants to look up any entity (chemical name, STITCH CID, STRING
+  protein ID) in STITCH.
 ---
 
-# 45_STITCH — Search Tool for Interactions of Chemicals
+# STITCH Query Skill
 
-Use this file as the compact operator guide for the paired `skillexamples` script.
-Prefer reading the Python example itself for exact request parameters, field names,
-and response handling.
+Search STITCH for chemical–protein interactions via REST API. Auto-detects input type:
 
-## Paired Example
+| Input Pattern | Detected As | Example |
+|---|---|---|
+| `CIDm00002244` / `CIDs00002244` | STITCH chemical ID | direct lookup |
+| `9606.ENSP00000352121` | STRING protein ID | direct lookup |
+| anything else | free text | resolved via `/resolve` first |
 
-- Script: `45_STITCH.py`
-- Category: `Drug-centric`
-- Type: `KG`
-- Subcategory: `Drug-Target Interaction (DTI)`
+## API
 
-## API Surface
+| Function | Input | Returns |
+|---|---|---|
+| `resolve(name, species)` | chemical / protein name | `list[dict]` with stringId, preferredName |
+| `resolve_batch(names, species)` | list of names | `list[dict]` (via `/resolveList`) |
+| `get_interactors(id, species, limit, required_score)` | single ID | `list[dict]` with partner IDs + scores |
+| `get_actions(id, species, limit, required_score)` | single ID | `list[dict]` with mode (activation/inhibition/binding…) |
+| `get_interactions(ids, species, required_score)` | list of IDs | `list[dict]` pairwise interactions among inputs |
+| `search(entity, species, limit, required_score)` | single entity (any type) | `dict` with resolved_id, interactors, actions |
+| `search_batch(entities, species, limit, required_score)` | list or comma-separated string | `dict[str, dict]` |
+| `summarize(result, entity)` | search() result + label | compact text |
+| `to_json(result)` | any result | JSON string |
 
-| Function | Purpose |
+## Key Fields
+
+**Interactors** — `stringId_A`, `stringId_B`, `preferredName_A`, `preferredName_B`, `score`, `nscore`, `fscore`, `pscore`, `ascore`, `escore`, `dscore`, `tscore`
+
+**Actions** — `stringId_A`, `stringId_B`, `preferredName_A`, `preferredName_B`, `mode` (activation / inhibition / binding / catalysis / reaction / expression / ptmod), `action`, `is_directional`, `a_is_acting`, `score`
+
+## Score Channels
+
+| Abbrev | Meaning |
 |---|---|
-| `resolve()` | See `45_STITCH.py` for exact input/output behavior. |
-| `resolve_batch()` | See `45_STITCH.py` for exact input/output behavior. |
-| `get_interactors()` | See `45_STITCH.py` for exact input/output behavior. |
-| `get_actions()` | See `45_STITCH.py` for exact input/output behavior. |
-| `get_interactions()` | See `45_STITCH.py` for exact input/output behavior. |
-| `search()` | See `45_STITCH.py` for exact input/output behavior. |
-| `search_batch()` | See `45_STITCH.py` for exact input/output behavior. |
-| `summarize()` | See `45_STITCH.py` for exact input/output behavior. |
+| nscore | neighborhood (genomic context) |
+| fscore | gene fusion |
+| pscore | phylogenetic co-occurrence |
+| ascore | co-expression |
+| escore | experimental evidence |
+| dscore | curated database evidence |
+| tscore | text mining |
+| score  | combined score (0–1000; 400=medium, 700=high, 900=highest) |
 
 ## Usage
 
-Read `45_STITCH.py` and copy its call pattern when writing Code Agent query code.
-Keep network timeouts short and preserve the script's native access method
-(REST, direct download, local file scan, or HTML scraping).
-
-## Validation
-
-- Validation script: `tools/test_skill_45_stitch.py`
-- Run: `python tools/test_skill_45_stitch.py`
-- Runtime import: `from skills.dti.stitch import STITCHSkill`
-
-## Notes
-
-- Review `if __name__ == "__main__"` in `45_STITCH.py` first when generating runnable query code.
-- Primary link from the example: <http://stitch.embl.de/>
-- Reference paper from the example: <https://doi.org/10.1093/nar/gkv1277>
-- The validation script currently checks:
-- import STITCHSkill
-- instantiate STITCHSkill(timeout=20)
-- call is_available()
-- standard query: drug=imatinib
-- edge query: drug=zzz_not_a_real_drug_zzz
-- validate evidence_text and metadata
+See `if __name__ == "__main__"` block in `45_STITCH.py` for runnable examples covering: free-text name, STITCH CID, batch search, and JSON output.
 
 ## Data Source
 
-- <http://stitch.embl.de/>
-- <https://doi.org/10.1093/nar/gkv1277>
-- <http://stitch.embl.de/api/>
-- <http://stitch.embl.de/api>
-- <https://string-db.org/api>
+- **Provider**: STITCH / STRING Consortium (EMBL, CPR, SIB, KU)
+- **Primary URL**: `http://stitch.embl.de/api`
+- **Fallback URL**: `https://string-db.org/api` (STITCH data merged into STRING 12+)
+- **Auth**: None (public API; rate-limited — avoid parallel bulk requests)
+- **Species**: Default 9606 (Homo sapiens); pass NCBI taxonomy ID for other organisms

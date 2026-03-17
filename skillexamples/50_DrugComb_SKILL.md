@@ -1,50 +1,45 @@
 ---
-name: drugcomb-query
+name: DrugComb
 description: >
-  Query or inspect the DrugComb - Drug Combination Response Data for Cancer resource for drug-centric tasks with emphasis on drug combination/synergy Use whenever Codex needs the calling pattern, downloadable entrypoint, or example query flow from this skill example script.
+  Query the DrugComb drug combination database for cancer cell-line synergy
+  and sensitivity data. Use whenever the user asks about drug combinations,
+  synergy scores (ZIP/Bliss/Loewe/HSA), combination sensitivity (CSS),
+  or wants to look up how two drugs interact in a specific cancer cell line.
 ---
 
-# DrugComb - Drug Combination Response Data for Cancer
+# DrugComb Query Skill
 
-Use this file as the compact operator guide for the paired `skillexamples` script.
-Prefer reading the Python example itself for exact request parameters, field names,
-and response handling.
+Search DrugComb summary records by any entity. Auto-detects type by pattern:
 
-## Paired Example
+| Input Pattern | Detected As | Match Logic |
+|---|---|---|
+| `5-FU` / `imatinib` | drug name | case-insensitive substring on `drug_row` OR `drug_col` |
+| `A549` / `MCF-7` | cell line | case-insensitive substring on `cell_line_name` |
+| `12345` (pure digits) | block_id | exact on `block_id` |
+| `CID:2244` | PubChem CID | exact on `drug_row_cid` OR `drug_col_cid` |
 
-- Script: `50_DrugComb.py`
-- Category: `Drug-centric`
-- Type: `DB`
-- Subcategory: `Drug Combination/Synergy`
+## API
 
-## API Surface
-
-| Function | Purpose |
-|---|---|
-| `download_drugcomb()` | See `50_DrugComb.py` for exact input/output behavior. |
-| `list_zenodo_files()` | See `50_DrugComb.py` for exact input/output behavior. |
-| `preview_drugcomb()` | See `50_DrugComb.py` for exact input/output behavior. |
+| Function | Input | Returns |
+|---|---|---|
+| `load_drugcomb(path)` | CSV path | `list[dict]` |
+| `columns(data)` | loaded data | column name list |
+| `search(data, entity)` | single entity string | `list[dict]` |
+| `search_batch(data, entities)` | list of entity strings | `dict[str, list[dict]]` |
+| `summarize(hits, entity)` | hit list + label | compact LLM-readable text |
+| `to_json(hits)` | hit list | `list[dict]` |
 
 ## Usage
 
-Read `50_DrugComb.py` and copy its call pattern when writing Code Agent query code.
-Keep network timeouts short and preserve the script's native access method
-(REST, direct download, local file scan, or HTML scraping).
+See `if __name__ == "__main__"` block in `50_DrugComb.py` for runnable examples covering: drug name search, cell-line search, batch search, and JSON output.
 
-## Validation
+## Data
 
-- Validation script: `tools/test_skill_50_drugcomb.py`
-- Run: `python tools/test_skill_50_drugcomb.py`
-- Runtime import: `from skills.drug_combination.drugcomb.drugcomb_skill import DrugCombSkill`
+- **Source**: DrugComb v1.4 summary table (`summary_table_v1.4.csv`, 193 MB)
+- **Download**: <https://zenodo.org/records/11102665>
+- **Key columns**: `block_id`, `drug_row`, `drug_col`, `cell_line_name`, `synergy_zip`, `synergy_bliss`, `synergy_loewe`, `synergy_hsa`, `css_ri` / `css`, `study_name`
+- **Path**: `DATA_PATH` variable in `50_DrugComb.py`
 
-## Notes
+## Citation
 
-- Review `if __name__ == "__main__"` in `50_DrugComb.py` first when generating runnable query code.
-- Primary link from the example: <https://zenodo.org/records/11102665>
-- Reference paper from the example: <https://academic.oup.com/nar/article/47/W1/W43/5486743>
-- Inspect the validation script directly for its current assertions and sample entities.
-
-## Data Source
-
-- <https://zenodo.org/records/11102665>
-- <https://academic.oup.com/nar/article/47/W1/W43/5486743>
+Zagidullin B, Aldahdooh J, Zheng S, et al. DrugComb: an integrative cancer drug combination data portal. *Nucleic Acids Res.* 2019;47(W1):W43–W51. doi:10.1093/nar/gkz337

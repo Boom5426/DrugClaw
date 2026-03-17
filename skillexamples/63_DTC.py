@@ -13,13 +13,10 @@ Access method: Direct CSV download (no registration required).
 import urllib.request
 import os
 import csv
-import shutil
-from pathlib import Path
 
-OUTPUT_DIR = str(Path(__file__).resolve().parents[1] / "resources_metadata" / "dti" / "DTC")
+OUTPUT_DIR = "DTC"
 # Direct CSV download
 CSV_URL = "https://drugtargetcommons.fimm.fi/static/Excell_files/DTC_data.csv"
-LOCAL_FALLBACK = Path(__file__).resolve().parents[1] / "resources_metadata" / "dti" / "DTC" / "DTC_data.csv"
 
 
 def download_dtc():
@@ -45,10 +42,6 @@ def download_dtc():
         return fname
     except Exception as e:
         print(f"\nFailed: {e}")
-        if LOCAL_FALLBACK.exists():
-            shutil.copyfile(LOCAL_FALLBACK, fname)
-            print(f"Using local fallback: {fname}")
-            return fname
         return None
 
 

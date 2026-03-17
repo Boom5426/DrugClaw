@@ -1,51 +1,46 @@
 ---
-name: gdkd-query
+name: GDKD-query
 description: >
-  Query or inspect the GDKD - Genomics-Drug Knowledge Database resource for drug-centric tasks with emphasis on drug-target interaction (dti) Use whenever Codex needs the calling pattern, downloadable entrypoint, or example query flow from this skill example script.
+  Query the Gene-Drug Knowledge Database (GDKD) for variant-specific
+  gene–drug associations in oncology. Use when the user asks about
+  cancer genomic biomarkers, drug sensitivity/resistance by gene or
+  variant, targetable mutations, or clinical evidence for cancer
+  therapeutics.
 ---
 
-# GDKD - Genomics-Drug Knowledge Database
+# GDKD Query Skill
 
-Use this file as the compact operator guide for the paired `skillexamples` script.
-Prefer reading the Python example itself for exact request parameters, field names,
-and response handling.
+Search the Gene-Drug Knowledge Database (v20.0) by any entity.
+Auto-detects input type by pattern:
 
-## Paired Example
+| Input Pattern | Detected As | Match Logic |
+|---|---|---|
+| `BRAF`, `EGFR` | Gene symbol | exact on `Gene` (case-insensitive) |
+| `V600E`, `T315I` | Variant | exact on `Variant` |
+| `amplification` | Variant keyword | substring on `Description` |
+| anything else | Free text | substring on `Disease`, `Gene`, `Description`, all `Therapeutic context` columns |
 
-- Script: `54_GDKD.py`
-- Category: `Drug-centric`
-- Type: `DB`
-- Subcategory: `Drug-Target Interaction (DTI)`
+## API
 
-## API Surface
-
-| Function | Purpose |
-|---|---|
-| `download_via_synapseclient()` | See `54_GDKD.py` for exact input/output behavior. |
-| `download_ccle_data_alternative()` | See `54_GDKD.py` for exact input/output behavior. |
-| `describe_gdkd()` | See `54_GDKD.py` for exact input/output behavior. |
+| Function | Input | Returns |
+|---|---|---|
+| `load_gdkd(path)` | xlsx path | DataFrame |
+| `search(df, entity)` | single entity string | DataFrame |
+| `search_batch(df, entities)` | list of entity strings | dict[str, DataFrame] |
+| `summarize(hits, entity)` | DataFrame + label | compact text |
+| `to_json(hits)` | DataFrame | list[dict] |
 
 ## Usage
 
-Read `54_GDKD.py` and copy its call pattern when writing Code Agent query code.
-Keep network timeouts short and preserve the script's native access method
-(REST, direct download, local file scan, or HTML scraping).
+See `if __name__ == "__main__"` block in `16_GDKD.py` for runnable
+examples covering: gene symbol, variant, disease name, drug name,
+batch search, and JSON output.
 
-## Validation
+## Data
 
-- Validation script: `tools/test_skill_54_gdkd.py`
-- Run: `python tools/test_skill_54_gdkd.py`
-- Runtime import: `from skills.dti.gdkd.gdkd_skill import GDKDSkill`
-
-## Notes
-
-- Review `if __name__ == "__main__"` in `54_GDKD.py` first when generating runnable query code.
-- Primary link from the example: <https://www.synapse.org/#!Synapse:syn2370773>
-- Reference paper from the example: <https://doi.org/10.1038/nature11003>
-- Inspect the validation script directly for its current assertions and sample entities.
-
-## Data Source
-
-- <https://www.synapse.org/#!Synapse:syn2370773>
-- <https://doi.org/10.1038/nature11003>
-- <https://www.synapse.org/>
+- **Source**: GDKD Knowledge Database v20.0 (Synapse `syn2370773`)
+- **Paper**: Dienstmann et al., *Cancer Discovery* 2015;5(2):118-123
+- **Format**: xlsx, one row per disease–gene–variant triplet
+- **Core columns**: `Disease`, `Gene`, `Variant`, `Description`, `Effect`
+- **Association slots**: up to 8 per row, each with `Association_N`, `Therapeutic context_N`, `Status_N`, `Evidence_N`, `PMID_N`
+- **Path**: `DATA_PATH` variable in `16_GDKD.py`
