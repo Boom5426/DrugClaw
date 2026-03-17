@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DrugClaw — Agentic RAG for Drug Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#070b14;
+    --bg2:#0c1220;
+    --bg3:#111827;
+    --surface:#161e2e;
+    --border:#1e293b;
+    --text:#e2e8f0;
+    --text-muted:#94a3b8;
+    --accent:#22d3ee;
+    --accent2:#06b6d4;
+    --green:#34d399;
+    --purple:#a78bfa;
+    --orange:#fb923c;
+    --pink:#f472b6;
+    --yellow:#fbbf24;
+    --grad1:linear-gradient(135deg,#22d3ee 0%,#06b6d4 50%,#0891b2 100%);
+    --grad2:linear-gradient(135deg,#22d3ee 0%,#a78bfa 100%);
+    --glow:0 0 30px rgba(34,211,238,0.15);
+  }
+  html{scroll-behavior:smooth}
+  body{
+    font-family:'Outfit',sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    line-height:1.7;
+    overflow-x:hidden;
+  }
+  a{color:var(--accent);text-decoration:none;transition:color .2s}
+  a:hover{color:#67e8f9}
+
+  /* ── ANIMATED BG ── */
+  .bg-grid{
+    position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:
+      radial-gradient(ellipse 600px 400px at 20% 10%,rgba(34,211,238,0.06) 0%,transparent 70%),
+      radial-gradient(ellipse 500px 500px at 80% 60%,rgba(167,139,250,0.05) 0%,transparent 70%),
+      radial-gradient(ellipse 400px 300px at 50% 90%,rgba(52,211,153,0.04) 0%,transparent 70%);
+  }
+  .bg-grid::after{
+    content:'';position:absolute;inset:0;
+    background-image:
+      linear-gradient(rgba(34,211,238,0.03) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(34,211,238,0.03) 1px,transparent 1px);
+    background-size:60px 60px;
+    mask-image:radial-gradient(ellipse 80% 60% at 50% 40%,black,transparent);
+  }
+
+  /* ── NAV ── */
+  nav{
+    position:fixed;top:0;left:0;right:0;z-index:100;
+    backdrop-filter:blur(20px);
+    background:rgba(7,11,20,0.8);
+    border-bottom:1px solid rgba(34,211,238,0.08);
+    padding:0 2rem;
+  }
+  .nav-inner{
+    max-width:1200px;margin:0 auto;
+    display:flex;align-items:center;justify-content:space-between;
+    height:64px;
+  }
+  .nav-logo{
+    font-family:'DM Serif Display',serif;
+    font-size:1.4rem;color:#fff;
+    display:flex;align-items:center;gap:.6rem;
+  }
+  .nav-logo .claw{color:var(--accent);font-weight:700}
+  .nav-links{display:flex;gap:2rem;list-style:none}
+  .nav-links a{
+    color:var(--text-muted);font-size:.88rem;font-weight:500;
+    letter-spacing:.02em;transition:color .2s;
+  }
+  .nav-links a:hover{color:#fff}
+  .nav-cta{
+    background:var(--grad1);color:#000;
+    padding:.5rem 1.2rem;border-radius:8px;
+    font-weight:600;font-size:.85rem;
+    transition:transform .2s,box-shadow .2s;
+  }
+  .nav-cta:hover{
+    transform:translateY(-1px);
+    box-shadow:0 4px 20px rgba(34,211,238,0.3);
+    color:#000;
+  }
+
+  /* ── HERO ── */
+  .hero{
+    position:relative;z-index:1;
+    min-height:100vh;
+    display:flex;align-items:center;justify-content:center;
+    text-align:center;
+    padding:8rem 2rem 4rem;
+  }
+  .hero-content{max-width:860px}
+
+  .hero-badge{
+    display:inline-flex;align-items:center;gap:.5rem;
+    background:rgba(34,211,238,0.08);
+    border:1px solid rgba(34,211,238,0.15);
+    border-radius:100px;padding:.4rem 1.2rem;
+    font-size:.82rem;color:var(--accent);
+    margin-bottom:2rem;
+    animation:fadeUp .8s ease both;
+  }
+  .hero-badge .dot{
+    width:6px;height:6px;border-radius:50%;
+    background:var(--green);
+    box-shadow:0 0 8px var(--green);
+    animation:pulse 2s infinite;
+  }
+
+  .hero h1{
+    font-family:'DM Serif Display',serif;
+    font-size:clamp(3rem,7vw,5.5rem);
+    line-height:1.05;
+    background:linear-gradient(135deg,#fff 0%,#cbd5e1 40%,var(--accent) 100%);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    margin-bottom:1.5rem;
+    animation:fadeUp .8s .1s ease both;
+  }
+  .hero p{
+    font-size:clamp(1.05rem,2vw,1.25rem);
+    color:var(--text-muted);
+    max-width:640px;margin:0 auto 2.5rem;
+    animation:fadeUp .8s .2s ease both;
+  }
+  .hero-actions{
+    display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;
+    animation:fadeUp .8s .3s ease both;
+  }
+  .btn-primary{
+    background:var(--grad1);color:#000;
+    padding:.75rem 2rem;border-radius:12px;
+    font-weight:600;font-size:.95rem;
+    display:inline-flex;align-items:center;gap:.5rem;
+    transition:transform .2s,box-shadow .2s;
+  }
+  .btn-primary:hover{
+    transform:translateY(-2px);color:#000;
+    box-shadow:0 8px 30px rgba(34,211,238,0.25);
+  }
+  .btn-secondary{
+    border:1px solid var(--border);
+    color:var(--text);padding:.75rem 2rem;border-radius:12px;
+    font-weight:500;font-size:.95rem;
+    display:inline-flex;align-items:center;gap:.5rem;
+    transition:all .2s;background:rgba(255,255,255,0.03);
+  }
+  .btn-secondary:hover{
+    border-color:var(--accent);color:#fff;
+    background:rgba(34,211,238,0.05);
+  }
+
+  /* ── STATS BAR ── */
+  .stats-bar{
+    position:relative;z-index:1;
+    max-width:900px;margin:-2rem auto 0;
+    display:grid;grid-template-columns:repeat(4,1fr);
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:16px;
+    overflow:hidden;
+    animation:fadeUp .8s .4s ease both;
+  }
+  .stat{
+    padding:1.5rem;text-align:center;
+    border-right:1px solid var(--border);
+    transition:background .3s;
+  }
+  .stat:last-child{border-right:none}
+  .stat:hover{background:rgba(34,211,238,0.03)}
+  .stat-num{
+    font-family:'JetBrains Mono',monospace;
+    font-size:2rem;font-weight:700;
+    background:var(--grad2);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  .stat-label{font-size:.82rem;color:var(--text-muted);margin-top:.2rem}
+
+  /* ── SECTIONS ── */
+  section{position:relative;z-index:1;padding:6rem 2rem}
+  .container{max-width:1100px;margin:0 auto}
+  .section-label{
+    display:inline-flex;align-items:center;gap:.4rem;
+    font-family:'JetBrains Mono',monospace;
+    font-size:.78rem;color:var(--accent);
+    text-transform:uppercase;letter-spacing:.12em;
+    margin-bottom:.8rem;
+  }
+  .section-label::before{
+    content:'';width:20px;height:1px;background:var(--accent);
+  }
+  .section-title{
+    font-family:'DM Serif Display',serif;
+    font-size:clamp(2rem,4vw,3rem);
+    line-height:1.15;margin-bottom:1rem;
+  }
+  .section-desc{
+    font-size:1.05rem;color:var(--text-muted);
+    max-width:640px;margin-bottom:3rem;
+  }
+
+  /* ── FEATURES GRID ── */
+  .features-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+    gap:1.5rem;
+  }
+  .feature-card{
+    background:var(--bg2);
+    border:1px solid var(--border);
+    border-radius:16px;
+    padding:2rem;
+    transition:all .3s;
+    position:relative;overflow:hidden;
+  }
+  .feature-card::before{
+    content:'';position:absolute;top:0;left:0;right:0;
+    height:2px;background:var(--grad1);
+    opacity:0;transition:opacity .3s;
+  }
+  .feature-card:hover{
+    border-color:rgba(34,211,238,0.2);
+    transform:translateY(-4px);
+    box-shadow:var(--glow);
+  }
+  .feature-card:hover::before{opacity:1}
+  .feature-icon{
+    width:48px;height:48px;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:1.4rem;margin-bottom:1.2rem;
+  }
+  .feature-card h3{font-size:1.15rem;font-weight:600;margin-bottom:.6rem}
+  .feature-card p{font-size:.92rem;color:var(--text-muted);line-height:1.6}
+
+  .ic-cyan{background:rgba(34,211,238,0.1)}
+  .ic-green{background:rgba(52,211,153,0.1)}
+  .ic-purple{background:rgba(167,139,250,0.1)}
+  .ic-orange{background:rgba(251,146,60,0.1)}
+  .ic-pink{background:rgba(244,114,182,0.1)}
+  .ic-yellow{background:rgba(251,191,36,0.1)}
+
+  /* ── MODES ── */
+  .modes-grid{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem;
+  }
+  .mode-card{
+    background:var(--bg2);
+    border:1px solid var(--border);
+    border-radius:16px;padding:2rem;
+    text-align:center;transition:all .3s;
+  }
+  .mode-card:hover{
+    border-color:rgba(34,211,238,0.2);
+    transform:translateY(-4px);box-shadow:var(--glow);
+  }
+  .mode-tag{
+    display:inline-block;
+    font-family:'JetBrains Mono',monospace;
+    font-size:.75rem;font-weight:600;
+    padding:.3rem .8rem;border-radius:6px;
+    margin-bottom:1rem;
+  }
+  .mode-graph .mode-tag{background:rgba(167,139,250,0.15);color:var(--purple)}
+  .mode-simple .mode-tag{background:rgba(52,211,153,0.15);color:var(--green)}
+  .mode-web .mode-tag{background:rgba(34,211,238,0.15);color:var(--accent)}
+  .mode-card h3{font-size:1.1rem;margin-bottom:.6rem}
+  .mode-card p{font-size:.88rem;color:var(--text-muted)}
+
+  /* ── ARCHITECTURE ── */
+  .arch-box{
+    background:var(--bg2);border:1px solid var(--border);
+    border-radius:20px;padding:3rem;
+    font-family:'JetBrains Mono',monospace;
+    font-size:.85rem;line-height:2;
+    color:var(--text-muted);
+    overflow-x:auto;
+    position:relative;
+  }
+  .arch-box .hl{color:var(--accent);font-weight:500}
+  .arch-box .hl2{color:var(--green);font-weight:500}
+  .arch-box .hl3{color:var(--purple);font-weight:500}
+  .arch-box .hl4{color:var(--orange);font-weight:500}
+
+  /* ── SKILLS TABLE ── */
+  .skills-table-wrap{
+    background:var(--bg2);border:1px solid var(--border);
+    border-radius:16px;overflow:hidden;
+  }
+  .skills-table{width:100%;border-collapse:collapse}
+  .skills-table th{
+    text-align:left;padding:1rem 1.5rem;
+    font-size:.78rem;text-transform:uppercase;
+    letter-spacing:.08em;color:var(--text-muted);
+    background:var(--surface);
+    border-bottom:1px solid var(--border);
+  }
+  .skills-table td{
+    padding:.85rem 1.5rem;
+    border-bottom:1px solid rgba(30,41,59,0.5);
+    font-size:.9rem;
+  }
+  .skills-table tr:last-child td{border-bottom:none}
+  .skills-table tr:hover td{background:rgba(34,211,238,0.02)}
+  .cat-tag{
+    font-family:'JetBrains Mono',monospace;
+    font-size:.78rem;font-weight:600;
+    padding:.2rem .6rem;border-radius:4px;
+    white-space:nowrap;
+  }
+  .ct-dti{background:rgba(34,211,238,0.12);color:var(--accent)}
+  .ct-adr{background:rgba(244,114,182,0.12);color:var(--pink)}
+  .ct-kb{background:rgba(167,139,250,0.12);color:var(--purple)}
+  .ct-mech{background:rgba(52,211,153,0.12);color:var(--green)}
+  .ct-label{background:rgba(251,191,36,0.12);color:var(--yellow)}
+  .ct-onto{background:rgba(251,146,60,0.12);color:var(--orange)}
+  .ct-repo{background:rgba(34,211,238,0.12);color:var(--accent)}
+  .ct-pgx{background:rgba(244,114,182,0.12);color:var(--pink)}
+  .ct-ddi{background:rgba(167,139,250,0.12);color:var(--purple)}
+  .ct-tox{background:rgba(251,146,60,0.12);color:var(--orange)}
+  .ct-comb{background:rgba(52,211,153,0.12);color:var(--green)}
+  .ct-mol{background:rgba(251,191,36,0.12);color:var(--yellow)}
+  .ct-dis{background:rgba(34,211,238,0.12);color:var(--accent)}
+  .ct-rev{background:rgba(244,114,182,0.12);color:var(--pink)}
+  .ct-nlp{background:rgba(167,139,250,0.12);color:var(--purple)}
+  .skill-list{color:var(--text-muted);font-size:.85rem}
+
+  /* ── QUICKSTART ── */
+  .steps{display:flex;flex-direction:column;gap:1.5rem}
+  .step{
+    display:flex;gap:1.5rem;
+    background:var(--bg2);border:1px solid var(--border);
+    border-radius:16px;padding:1.5rem 2rem;
+    transition:all .3s;
+  }
+  .step:hover{border-color:rgba(34,211,238,0.15)}
+  .step-num{
+    font-family:'JetBrains Mono',monospace;
+    font-size:1.8rem;font-weight:700;
+    background:var(--grad2);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    line-height:1;min-width:40px;
+  }
+  .step h3{font-size:1rem;font-weight:600;margin-bottom:.4rem}
+  .step p{font-size:.9rem;color:var(--text-muted)}
+  .step code{
+    font-family:'JetBrains Mono',monospace;
+    font-size:.82rem;
+    background:rgba(34,211,238,0.08);
+    color:var(--accent);
+    padding:.15rem .5rem;border-radius:4px;
+  }
+
+  /* ── CODE BLOCK ── */
+  .code-block{
+    background:var(--bg);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:1.2rem 1.5rem;
+    font-family:'JetBrains Mono',monospace;
+    font-size:.82rem;
+    line-height:1.8;
+    overflow-x:auto;
+    margin-top:.8rem;
+    color:var(--text-muted);
+  }
+  .code-block .cmd{color:var(--green)}
+  .code-block .comment{color:#475569}
+
+  /* ── CTA ── */
+  .cta-section{
+    text-align:center;
+    background:
+      radial-gradient(ellipse 600px 300px at 50% 50%,rgba(34,211,238,0.06),transparent);
+  }
+  .cta-section .section-title{
+    background:linear-gradient(135deg,#fff,var(--accent));
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  }
+
+  /* ── FOOTER ── */
+  footer{
+    position:relative;z-index:1;
+    border-top:1px solid var(--border);
+    padding:3rem 2rem;text-align:center;
+    color:var(--text-muted);font-size:.85rem;
+  }
+  footer .foot-links{
+    display:flex;gap:2rem;justify-content:center;
+    margin-bottom:1rem;
+  }
+  footer a{color:var(--text-muted)}
+  footer a:hover{color:var(--accent)}
+
+  /* ── ANIMATIONS ── */
+  @keyframes fadeUp{
+    from{opacity:0;transform:translateY(24px)}
+    to{opacity:1;transform:translateY(0)}
+  }
+  @keyframes pulse{
+    0%,100%{opacity:1}50%{opacity:.4}
+  }
+  .fade-in{opacity:0;transform:translateY(30px);transition:all .7s ease}
+  .fade-in.visible{opacity:1;transform:translateY(0)}
+
+  /* ── RESPONSIVE ── */
+  @media(max-width:768px){
+    .nav-links{display:none}
+    .stats-bar{grid-template-columns:repeat(2,1fr)}
+    .stat{border-bottom:1px solid var(--border)}
+    .modes-grid{grid-template-columns:1fr}
+    .step{flex-direction:column;gap:.8rem}
+    .hero{padding:7rem 1.5rem 4rem}
+    .arch-box{padding:1.5rem;font-size:.75rem}
+    .skills-table td,.skills-table th{padding:.7rem 1rem}
+    section{padding:4rem 1.5rem}
+  }
+
+  /* ── MOLECULAR DECORATION ── */
+  .molecule{
+    position:absolute;border-radius:50%;pointer-events:none;
+    animation:float 8s ease-in-out infinite;
+  }
+  @keyframes float{
+    0%,100%{transform:translateY(0) rotate(0deg)}
+    50%{transform:translateY(-20px) rotate(180deg)}
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <div class="nav-logo">🦞 Drug<span class="claw">Claw</span></div>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#modes">Modes</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#skills">Skills</a></li>
+      <li><a href="#quickstart">Quick Start</a></li>
+    </ul>
+    <a href="https://github.com/QSong-github/DrugClaw" class="nav-cta" target="_blank">⭐ GitHub</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="dot"></span>
+      Open Source · MIT License
+    </div>
+    <h1>Agentic RAG for Drug Intelligence</h1>
+    <p>A drug-centered multi-agent RAG system for knowledge retrieval, reasoning, and evidence synthesis across 70 curated biomedical resources.</p>
+    <div class="hero-actions">
+      <a href="#quickstart" class="btn-primary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Get Started
+      </a>
+      <a href="https://github.com/QSong-github/DrugClaw" class="btn-secondary" target="_blank">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.387.6.113.82-.258.82-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.73.083-.73 1.205.085 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.3 1.23A11.51 11.51 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.29-1.552 3.297-1.23 3.297-1.23.653 1.652.242 2.873.118 3.176.77.84 1.235 1.91 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .322.218.694.825.576C20.565 21.796 24 17.3 24 12 24 5.37 18.627 0 12 0z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-num">70</div>
+    <div class="stat-label">Curated Resources</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">57</div>
+    <div class="stat-label">Implemented Skills</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">15</div>
+    <div class="stat-label">Drug Subcategories</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">3</div>
+    <div class="stat-label">Reasoning Modes</div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="container fade-in">
+    <div class="section-label">Why DrugClaw</div>
+    <h2 class="section-title">Built for drug-native intelligence</h2>
+    <p class="section-desc">Most biomedical QA systems stop at "retrieve a few passages and summarize them." Drug questions demand precision, provenance, and multi-hop reasoning.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon ic-cyan">🧬</div>
+        <h3>Vibe-Coding Retrieval</h3>
+        <p>Each skill ships with its own SKILL.md and example.py. The Code Agent reads both, learns native usage patterns, and generates query code dynamically.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon ic-green">🌳</div>
+        <h3>15-Subcategory Skill Tree</h3>
+        <p>70 curated drug resources organized into a navigable skill tree spanning DTI, ADR, DDI, PGx, repurposing, and more.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon ic-purple">🔗</div>
+        <h3>Graph-Based Reasoning</h3>
+        <p>Turn free-form retrieval results into triples, subgraphs, ranked paths, and evidence-aware answers instead of simply stitching excerpts.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon ic-orange">🌐</div>
+        <h3>Web Search Fallback</h3>
+        <p>Built-in DuckDuckGo + PubMed search as a supplement for recent literature and external evidence beyond local resources.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon ic-pink">💊</div>
+        <h3>Drug-First Scope</h3>
+        <p>Opinionated around drug-native tasks from resource organization to retrieval strategy, reasoning flow, and final answer structure.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon ic-yellow">🔌</div>
+        <h3>Provider Agnostic</h3>
+        <p>Works with any OpenAI-compatible API: GPT-4o, Azure OpenAI, LLaMA via vLLM, Ollama, Together AI, and more.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MODES -->
+<section id="modes">
+  <div class="container fade-in">
+    <div class="section-label">Thinking Modes</div>
+    <h2 class="section-title">Three working modes</h2>
+    <p class="section-desc">Choose the right reasoning depth for your query — from fast retrieval to deep multi-hop graph reasoning.</p>
+    <div class="modes-grid">
+      <div class="mode-card mode-graph">
+        <div class="mode-tag">GRAPH</div>
+        <h3>Multi-Hop Reasoning</h3>
+        <p>Retrieve → Graph Build → Rerank → Respond → Reflect. Full evidence synthesis with optional iterative refinement and web search.</p>
+      </div>
+      <div class="mode-card mode-simple">
+        <div class="mode-tag">SIMPLE</div>
+        <h3>Direct Retrieval</h3>
+        <p>Retrieve and answer directly. Fast, efficient, and ideal for straightforward drug information queries.</p>
+      </div>
+      <div class="mode-card mode-web">
+        <div class="mode-tag">WEB_ONLY</div>
+        <h3>Online Search</h3>
+        <p>Use only online search and literature retrieval. Perfect when you need the latest published evidence.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section id="architecture">
+  <div class="container fade-in">
+    <div class="section-label">System Design</div>
+    <h2 class="section-title">Architecture</h2>
+    <p class="section-desc">A multi-agent pipeline from query understanding to evidence-grounded answers.</p>
+    <div class="arch-box">
+<pre>
+  <span class="hl">User Query</span>
+       │
+       ▼
+  <span class="hl2">Retriever Agent</span>
+       ├── navigates the 15-subcategory skill tree
+       ├── extracts key entities
+       └── selects relevant resources
+       │
+       ▼
+  <span class="hl3">Code Agent</span>
+       ├── reads SKILL.md + example.py
+       ├── writes custom query code
+       └── executes resource-specific retrieval
+       │
+       ├──▶ <span class="hl2">SIMPLE</span> ──▶ Responder ──▶ <span class="hl">Final Answer</span>
+       │
+       └──▶ <span class="hl3">GRAPH</span>  ──▶ Graph Builder ──▶ Reranker
+                        ──▶ Responder ──▶ Reflector
+                        ──▶ <span class="hl4">optional Web Search</span>
+                        ──▶ <span class="hl">Final Answer</span>
+</pre>
+    </div>
+  </div>
+</section>
+
+<!-- SKILLS -->
+<section id="skills">
+  <div class="container fade-in">
+    <div class="section-label">Coverage</div>
+    <h2 class="section-title">57 Implemented Skills</h2>
+    <p class="section-desc">Organized across 15 drug-specific subcategories for comprehensive coverage.</p>
+    <div class="skills-table-wrap">
+      <table class="skills-table">
+        <thead>
+          <tr><th>Category</th><th>#</th><th>Skills</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="cat-tag ct-dti">DTI</span></td><td>10</td><td class="skill-list">ChEMBL, BindingDB, DGIdb, Open Targets, TTD, STITCH, TarKG, GDKD, Molecular Targets ×2</td></tr>
+          <tr><td><span class="cat-tag ct-adr">ADR</span></td><td>4</td><td class="skill-list">FAERS, SIDER, nSIDES, ADReCS</td></tr>
+          <tr><td><span class="cat-tag ct-kb">Knowledgebase</span></td><td>8</td><td class="skill-list">UniD3, DrugBank, IUPHAR/BPS, DrugCentral, CPIC, PharmKG, WHO EML, FDA Orange Book</td></tr>
+          <tr><td><span class="cat-tag ct-mech">Mechanism</span></td><td>1</td><td class="skill-list">DRUGMECHDB</td></tr>
+          <tr><td><span class="cat-tag ct-label">Labeling</span></td><td>3</td><td class="skill-list">openFDA Human Drug, DailyMed, MedlinePlus Drug Info</td></tr>
+          <tr><td><span class="cat-tag ct-onto">Ontology</span></td><td>4</td><td class="skill-list">RxNorm, ChEBI, ATC/DDD, NDF-RT</td></tr>
+          <tr><td><span class="cat-tag ct-repo">Repurposing</span></td><td>6</td><td class="skill-list">RepoDB, DRKG, OREGANO, Drug Repurposing Hub, DrugRepoBank, RepurposeDrugs</td></tr>
+          <tr><td><span class="cat-tag ct-pgx">PGx</span></td><td>1</td><td class="skill-list">PharmGKB</td></tr>
+          <tr><td><span class="cat-tag ct-ddi">DDI</span></td><td>3</td><td class="skill-list">MecDDI, DDInter, KEGG Drug</td></tr>
+          <tr><td><span class="cat-tag ct-tox">Toxicity</span></td><td>4</td><td class="skill-list">UniTox, LiverTox, DILIrank, DILI</td></tr>
+          <tr><td><span class="cat-tag ct-comb">Combination</span></td><td>2</td><td class="skill-list">DrugCombDB, DrugComb</td></tr>
+          <tr><td><span class="cat-tag ct-mol">Molecular Prop</span></td><td>1</td><td class="skill-list">GDSC</td></tr>
+          <tr><td><span class="cat-tag ct-dis">Drug-Disease</span></td><td>1</td><td class="skill-list">SemaTyP</td></tr>
+          <tr><td><span class="cat-tag ct-rev">Reviews</span></td><td>2</td><td class="skill-list">WebMD Drug Reviews, Drugs.com Reviews</td></tr>
+          <tr><td><span class="cat-tag ct-nlp">Drug NLP</span></td><td>7</td><td class="skill-list">DDI Corpus 2013, DrugProt, ADE Corpus, CADEC, PsyTAR, TAC 2017 ADR, PHEE</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- QUICK START -->
+<section id="quickstart">
+  <div class="container fade-in">
+    <div class="section-label">Get Started</div>
+    <h2 class="section-title">Quick Start</h2>
+    <p class="section-desc">Up and running in minutes with just a working LLM config.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div>
+          <h3>Install Dependencies</h3>
+          <div class="code-block">
+            <span class="cmd">pip install</span> langgraph openai
+          </div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div>
+          <h3>Configure API Keys</h3>
+          <div class="code-block">
+            <span class="cmd">cp</span> api_keys.example.json api_keys.json<br>
+            <span class="comment"># Edit api_keys.json with your credentials</span>
+          </div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <div>
+          <h3>Run the Demo</h3>
+          <div class="code-block">
+            <span class="cmd">python -m drugclaw</span> demo<br>
+            <span class="cmd">python -m drugclaw</span> run --query "What are the known drug targets of imatinib?"
+          </div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">04</div>
+        <div>
+          <h3>Install CLI (Optional)</h3>
+          <div class="code-block">
+            <span class="cmd">pip install</span> -e . --no-build-isolation<br>
+            <span class="cmd">drugclaw</span> doctor<br>
+            <span class="cmd">drugclaw</span> list
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Python Usage -->
+    <div style="margin-top:2rem">
+      <h3 style="font-size:1rem;margin-bottom:.8rem">Python API</h3>
+      <div class="code-block">
+<span class="comment"># Call DrugClaw from Python</span>
+<span class="cmd">from</span> drugclaw.config <span class="cmd">import</span> Config
+<span class="cmd">from</span> drugclaw.main_system <span class="cmd">import</span> DrugClawSystem
+
+config = Config(key_file=<span style="color:var(--yellow)">"api_keys.json"</span>)
+system = DrugClawSystem(config)
+
+result = system.query(
+    <span style="color:var(--yellow)">"What prescribing and safety information is available for metformin?"</span>,
+    thinking_mode=ThinkingMode.SIMPLE,
+    resource_filter=[<span style="color:var(--yellow)">"DailyMed"</span>, <span style="color:var(--yellow)">"openFDA Human Drug"</span>],
+)
+print(result[<span style="color:var(--yellow)">"answer"</span>])
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="container fade-in" style="text-align:center">
+    <div class="section-label" style="justify-content:center">Ready to Start?</div>
+    <h2 class="section-title" style="margin-bottom:1rem">Accelerate your drug discovery research</h2>
+    <p class="section-desc" style="margin:0 auto 2rem">Raise resource density, retrieval fidelity, and evidence-grounded reasoning — all at the same time.</p>
+    <div class="hero-actions" style="justify-content:center">
+      <a href="https://github.com/QSong-github/DrugClaw" class="btn-primary" target="_blank">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.387.6.113.82-.258.82-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.73.083-.73 1.205.085 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.3 1.23A11.51 11.51 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.29-1.552 3.297-1.23 3.297-1.23.653 1.652.242 2.873.118 3.176.77.84 1.235 1.91 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .322.218.694.825.576C20.565 21.796 24 17.3 24 12 24 5.37 18.627 0 12 0z"/></svg>
+        Star on GitHub
+      </a>
+      <a href="https://github.com/QSong-github/DrugClaw/blob/main/README_CN.md" class="btn-secondary" target="_blank">
+        📖 中文文档
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="foot-links">
+    <a href="https://github.com/QSong-github/DrugClaw" target="_blank">GitHub</a>
+    <a href="https://github.com/QSong-github/DrugClaw/blob/main/README_CN.md" target="_blank">中文文档</a>
+    <a href="https://github.com/QSong-github/DrugClaw/blob/main/LICENSE" target="_blank">MIT License</a>
+  </div>
+  <p>DrugClaw — Agentic RAG for Drug Intelligence · Made with 🦞 by <a href="https://github.com/QSong-github" target="_blank">QSong Lab</a></p>
+</footer>
+
+<script>
+// Intersection Observer for fade-in animations
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.classList.add('visible');
+      observer.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.1 });
+document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+// Smooth active nav link
+const sections = document.querySelectorAll('section[id]');
+window.addEventListener('scroll', () => {
+  const y = window.scrollY + 100;
+  sections.forEach(s => {
+    const top = s.offsetTop;
+    const h = s.offsetHeight;
+    const id = s.getAttribute('id');
+    const link = document.querySelector(`.nav-links a[href="#${id}"]`);
+    if (link) {
+      if (y >= top && y < top + h) {
+        link.style.color = '#fff';
+      } else {
+        link.style.color = '';
+      }
+    }
+  });
+});
+</script>
+</body>
+</html>
