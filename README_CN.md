@@ -321,8 +321,12 @@ Retriever Agent
    v
 Code Agent
    |- 读取 SKILL.md + example.py
-   |- 生成定制查询代码
+   |- 生成定制查询代码（vibe coding）
    |- 执行资源特定检索
+   |
+   |- [代码失败时] 回退到固定 retrieve.py CLI
+   |     retrieve.py 实体1 [实体2 ...]
+   |     （确定性执行，无需 LLM，直接使用 example.py）
    |
    +--> SIMPLE 模式 --> Responder --> 最终回答
    |
@@ -334,6 +338,38 @@ Code Agent
          -> 可选 Web Search
          -> 最终回答
 ```
+
+## 技能回退机制
+
+每个含有 `example.py` 的技能目录同时包含一个 `retrieve.py`，
+这是一个固定的、确定性的 CLI 脚本，可在不使用 LLM 代码生成的情况下直接检索实体。
+
+**何时使用 `retrieve.py`？**
+
+Code Agent 首先尝试 *vibe coding*：读取 `SKILL.md` 和 `example.py`，
+生成并执行自定义 Python 脚本来查询技能。如果生成的代码失败
+（校验错误、运行时异常、超时或未返回结构化记录），Code Agent 会自动回退，
+通过子进程运行 `retrieve.py`。
+
+**手动运行 `retrieve.py`：**
+
+```bash
+# 以实体名称查询单个技能
+python skills/dti/chembl/retrieve.py imatinib
+python skills/adr/faers/retrieve.py aspirin metformin
+python skills/ddi/ddinter/retrieve.py warfarin aspirin
+
+# 支持任意数量的实体参数
+python skills/drug_toxicity/livertox/retrieve.py acetaminophen isoniazid
+```
+
+输入：一个或多个实体名称作为位置命令行参数。
+输出：打印到 stdout 的可读文本，适合作为 LLM 上下文。
+
+**回退优先级：**
+1. Vibe coding（Code Agent 通过 LLM 生成代码）
+2. `retrieve.py` 子进程（固定确定性脚本）
+3. `skill.retrieve()` 方法（最后保底，始终可用）
 
 ## 注册表检查
 

@@ -319,8 +319,12 @@ Retriever Agent
    v
 Code Agent
    |- reads SKILL.md + example.py
-   |- writes custom query code
+   |- writes custom query code  (vibe coding)
    |- executes resource-specific retrieval
+   |
+   |- [on code failure] fallback to fixed retrieve.py CLI
+   |     retrieve.py entity1 [entity2 ...]
+   |     (deterministic, no LLM, uses example.py directly)
    |
    +--> SIMPLE mode --> Responder --> Final Answer
    |
@@ -332,6 +336,40 @@ Code Agent
          -> optional Web Search
          -> Final Answer
 ```
+
+## Skill Fallback Mechanism
+
+Each skill directory that has an `example.py` also includes a `retrieve.py` —
+a fixed, deterministic CLI script for direct entity retrieval without LLM code
+generation.
+
+**When is `retrieve.py` used?**
+
+The Code Agent first attempts *vibe coding*: it reads `SKILL.md` and
+`example.py`, then generates and executes a custom Python script to query the
+skill. If that generated code fails (validation error, runtime exception,
+timeout, or no structured records returned), the Code Agent automatically falls
+back to running `retrieve.py` via subprocess.
+
+**How to run `retrieve.py` manually:**
+
+```bash
+# Query a single skill by entity name
+python skills/dti/chembl/retrieve.py imatinib
+python skills/adr/faers/retrieve.py aspirin metformin
+python skills/ddi/ddinter/retrieve.py warfarin aspirin
+
+# Any number of entity arguments is accepted
+python skills/drug_toxicity/livertox/retrieve.py acetaminophen isoniazid
+```
+
+Input: one or more entity names as positional command-line arguments.
+Output: human-readable text printed to stdout, suitable as LLM context.
+
+**Fallback priority order:**
+1. Vibe coding (LLM-generated code via Code Agent)
+2. `retrieve.py` subprocess (fixed deterministic script)
+3. `skill.retrieve()` method (last resort, always available)
 
 ## Registry Inspection
 

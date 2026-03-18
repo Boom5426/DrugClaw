@@ -11,9 +11,13 @@ The execution model is intentionally narrow:
 from __future__ import annotations
 
 import ast
+import inspect
 import io
 import json
+import os
 import signal
+import subprocess
+import sys
 import traceback
 from contextlib import redirect_stderr
 from typing import Any, Dict, List, Optional
@@ -269,15 +273,15 @@ Return ONLY Python code."""
                 strategy = "constrained_code"
 
                 if error:
-                    # Constrained code path failed — fallback to direct skill.retrieve()
+                    # Constrained code path failed — fallback to retrieve.py / skill.retrieve()
                     print(f"[Code Agent] Code execution failed for {skill_name}, "
-                          f"falling back to skill.retrieve()")
+                          f"falling back to fixed retrieve.py (or skill.retrieve())")
                     fallback_output, fallback_error, records = self._fallback_retrieve(
                         skill_name, entities, query, max_results_per_skill,
                     )
                     output = fallback_output
                     error = fallback_error
-                    code = "(fallback: skill.retrieve())"
+                    code = "(fallback: retrieve.py)"
                     strategy = "fallback_retrieve"
 
             per_skill[skill_name] = {
@@ -379,11 +383,41 @@ Return ONLY Python code."""
         query: str,
         max_results: int,
     ) -> tuple[str, str, List[Dict[str, Any]]]:
-        """Fallback: use the skill's retrieve() method directly."""
+        """Fallback: run retrieve.py CLI script if available, else skill.retrieve()."""
         skill = self.skill_registry.get_skill(skill_name)
         if skill is None:
             return "", f"Skill '{skill_name}' not registered", []
 
+        # Try the fixed retrieve.py script first
+        try:
+            skill_file = inspect.getfile(skill.__class__)
+            skill_dir = os.path.dirname(skill_file)
+            retrieve_py = os.path.join(skill_dir, "retrieve.py")
+            if os.path.isfile(retrieve_py):
+                entity_args = [
+                    name
+                    for enames in entities.values()
+                    for name in enames
+                ]
+                if entity_args:
+                    print(f"[Code Agent] Running fixed retrieve.py for {skill_name}: "
+                          f"{entity_args}")
+                    proc = subprocess.run(
+                        [sys.executable, retrieve_py] + entity_args,
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    output = proc.stdout.strip()
+                    if output:
+                        return output, "", []
+                    if proc.returncode != 0:
+                        print(f"[Code Agent] retrieve.py failed for {skill_name}: "
+                              f"{proc.stderr.strip()[:200]}")
+        except Exception as exc:
+            print(f"[Code Agent] retrieve.py execution error for {skill_name}: {exc}")
+
+        # Fallback: call skill.retrieve() directly
         try:
             results = skill.retrieve(
                 entities=entities, query=query, max_results=max_results,
