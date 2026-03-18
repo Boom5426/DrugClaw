@@ -129,6 +129,59 @@ def _structured_evidence_to_table_rows(
     return rows
 
 
+def _claim_to_target_label(claim: str) -> str:
+    text = str(claim or "").strip().rstrip(".")
+    if " targets " in text:
+        return text.split(" targets ", 1)[1].strip()
+    return text
+
+
+def _canonical_source_entity(items: List[Dict[str, Any]]) -> str:
+    labels = []
+    for item in items:
+        metadata = item.get("metadata", {}) or {}
+        label = str(metadata.get("source_entity", "")).strip()
+        if label:
+            labels.append(label)
+    if not labels:
+        return "—"
+    lowered = {label.lower() for label in labels}
+    if len(lowered) == 1:
+        return labels[0].lower()
+    return labels[0]
+
+
+def _target_claim_rows(structured: Dict[str, Any]) -> List[Dict[str, Any]]:
+    key_claims = structured.get("key_claims", []) or []
+    evidence_items = structured.get("evidence_items", []) or []
+    evidence_by_id = {
+        str(item.get("evidence_id", "")): item
+        for item in evidence_items
+        if item.get("evidence_id")
+    }
+
+    rows: List[Dict[str, Any]] = []
+    for claim in key_claims:
+        claim_text = str(claim.get("claim", "")).strip()
+        evidence_ids = [str(evidence_id) for evidence_id in claim.get("evidence_ids", []) if evidence_id]
+        claim_items = [evidence_by_id[evidence_id] for evidence_id in evidence_ids if evidence_id in evidence_by_id]
+        if not claim_items or " targets " not in claim_text:
+            continue
+
+        sources = list(dict.fromkeys(str(item.get("source_skill", "—")) for item in claim_items))
+        rows.append(
+            {
+                "source": ", ".join(sources),
+                "source_entity": _canonical_source_entity(claim_items),
+                "relationship": "targets",
+                "target_entity": _claim_to_target_label(claim_text),
+                "confidence": f"{float(claim.get('confidence', 0.0)):.2f}",
+                "sources": evidence_ids[:2],
+            }
+        )
+    return rows
+
+
 def format_reasoning_trace(reasoning_history: List[Dict[str, Any]]) -> str:
     """Render reasoning steps as a Markdown timeline."""
     if not reasoning_history:
@@ -240,7 +293,8 @@ def wrap_answer_card(
     structured     = result.get("final_answer_structured", {}) or {}
     structured_evidence = structured.get("evidence_items", []) or []
     structured_citations = structured.get("citations", []) or []
-    evidence_rows  = (
+    target_claim_rows = _target_claim_rows(structured) if "target" in str(query).lower() else []
+    evidence_rows  = target_claim_rows or (
         _structured_evidence_to_table_rows(structured_evidence)
         if structured_evidence else retrieved
     )
