@@ -95,9 +95,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print internal agent routing and execution logs.",
     )
     run_parser.add_argument(
-        "--save-html-report",
+        "--save-md-report",
         action="store_true",
-        help="Save a local visual HTML report under query_logs/ for this custom query.",
+        help="Save a local Markdown report under query_logs/ for this custom query.",
     )
 
     demo_parser = subparsers.add_parser(
@@ -437,7 +437,7 @@ def _run_query(
     show_plan: bool = False,
     show_claims: bool = False,
     debug_agents: bool = False,
-    save_html_report: bool = False,
+    save_md_report: bool = False,
 ) -> int:
     system = _build_system(key_file)
 
@@ -453,7 +453,7 @@ def _run_query(
         thinking_mode=thinking_mode,
         resource_filter=resource_filter or [],
         verbose=debug_agents,
-        save_html_report=save_html_report,
+        save_md_report=save_md_report,
     )
 
     if not debug_agents:
@@ -467,8 +467,8 @@ def _run_query(
         _print_plan_summary(result)
     if show_claims:
         _print_claim_summary(result)
-    if result.get("html_report_path"):
-        print(f"\nHTML report saved to {result['html_report_path']}")
+    if result.get("md_report_path"):
+        print(f"\nMarkdown report saved to {result['md_report_path']}")
 
     return 0 if result.get("success") else 1
 
@@ -553,7 +553,7 @@ def main(argv: List[str] | None = None) -> int:
             show_plan=args.show_plan,
             show_claims=args.show_claims,
             debug_agents=args.debug_agents,
-            save_html_report=args.save_html_report,
+            save_md_report=args.save_md_report,
         )
 
     if args.command == "doctor":

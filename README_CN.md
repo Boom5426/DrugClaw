@@ -123,13 +123,13 @@ python -m drugclaw run --query "What does imatinib target?" --show-plan --show-c
 python -m drugclaw run --query "What prescribing and safety information is available for metformin?" --debug-agents
 ```
 
-如果你想把自己的问题额外保存成一份本地可视化报告，可以显式传入：
+如果你想把自己的问题额外保存成一份本地 Markdown 报告，可以显式传入：
 
 ```bash
-python -m drugclaw run --query "What does imatinib target?" --save-html-report
+python -m drugclaw run --query "What does imatinib target?" --save-md-report
 ```
 
-执行后会在 `query_logs/<query_id>/report.html` 生成单文件 HTML 报告，并在命令结束时打印保存路径。
+执行后会在 `query_logs/<query_id>/report.md` 生成 Markdown 报告，并在命令结束时打印保存路径。
 
 如果这里已经能跑通，你其实已经有了一条最小可用路径。下一步是增强项，主要用于提升覆盖面，并启用依赖本地数据的那些 skill。
 

@@ -7,6 +7,7 @@ Each query is stored in its own directory:
     ├── query_index.json                        # Global index
     └── query_20260317_120000_123456/           # One folder per query
         ├── answer.md                           # Rich Markdown answer card
+        ├── report.md                           # Optional saved Markdown export
         ├── metadata.json                       # Query metadata + metrics
         ├── reasoning_trace.md                  # Step-by-step reasoning
         ├── evidence.json                       # Structured evidence records
@@ -24,7 +25,6 @@ from typing import Any, Dict, List, Optional
 from .response_formatter import (
     format_reasoning_trace,
     format_source_citations,
-    render_answer_report_html,
     wrap_answer_card,
 )
 
@@ -68,7 +68,7 @@ class QueryLogger:
         query: str,
         result: Dict[str, Any],
         metadata: Optional[Dict[str, Any]] = None,
-        save_html_report: bool = False,
+        save_md_report: bool = False,
     ) -> str:
         """
         Log a query and its results into a dedicated folder.
@@ -88,9 +88,8 @@ class QueryLogger:
         md_answer = wrap_answer_card(answer, result, timestamp)
         (query_dir / "answer.md").write_text(md_answer, encoding="utf-8")
 
-        if save_html_report:
-            html_report = render_answer_report_html(result, timestamp)
-            (query_dir / "report.html").write_text(html_report, encoding="utf-8")
+        if save_md_report:
+            (query_dir / "report.md").write_text(md_answer, encoding="utf-8")
 
         # ── 2. metadata.json — query metadata + metrics ─────────────
         meta = {
@@ -232,11 +231,11 @@ class QueryLogger:
             return md_file.read_text(encoding="utf-8")
         return None
 
-    def get_query_report_html_path(self, query_id: str) -> Optional[str]:
-        """Return the saved HTML report path for a query if present."""
-        html_file = self.log_dir / query_id / "report.html"
-        if html_file.exists():
-            return str(html_file)
+    def get_query_report_md_path(self, query_id: str) -> Optional[str]:
+        """Return the saved Markdown report path for a query if present."""
+        md_file = self.log_dir / query_id / "report.md"
+        if md_file.exists():
+            return str(md_file)
         return None
 
     def get_recent_queries(self, n: int = 10) -> List[Dict[str, Any]]:

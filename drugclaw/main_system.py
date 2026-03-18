@@ -415,7 +415,7 @@ class DrugClawSystem:
         resource_filter: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         verbose: bool = True,
-        save_html_report: bool = False,
+        save_md_report: bool = False,
     ) -> Dict[str, Any]:
         """
         Execute a drug-related query.
@@ -525,7 +525,7 @@ class DrugClawSystem:
                         query,
                         result,
                         metadata,
-                        save_html_report=save_html_report,
+                        save_md_report=save_md_report,
                     )
                 else:
                     sink = StringIO()
@@ -534,14 +534,14 @@ class DrugClawSystem:
                             query,
                             result,
                             metadata,
-                            save_html_report=save_html_report,
+                            save_md_report=save_md_report,
                         )
-                if save_html_report:
-                    html_report_path = self.logger.get_query_report_html_path(
+                if save_md_report:
+                    md_report_path = self.logger.get_query_report_md_path(
                         result["query_id"]
                     )
-                    if html_report_path:
-                        result["html_report_path"] = html_report_path
+                    if md_report_path:
+                        result["md_report_path"] = md_report_path
 
             return result
 

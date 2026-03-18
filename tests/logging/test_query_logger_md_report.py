@@ -48,34 +48,34 @@ def _sample_result() -> dict:
     }
 
 
-def test_query_logger_writes_html_report_when_requested(tmp_path: Path) -> None:
+def test_query_logger_writes_md_report_when_requested(tmp_path: Path) -> None:
     logger = QueryLogger(log_dir=str(tmp_path / "query_logs"))
 
     query_id = logger.log_query(
         "What does imatinib target?",
         _sample_result(),
-        save_html_report=True,
+        save_md_report=True,
     )
 
-    report_path = tmp_path / "query_logs" / query_id / "report.html"
+    report_path = tmp_path / "query_logs" / query_id / "report.md"
 
     assert report_path.exists()
-    html = report_path.read_text(encoding="utf-8")
-    assert "<html" in html.lower()
-    assert "What does imatinib target?" in html
-    assert "Imatinib targets ABL1." in html
-    assert "BindingDB" in html
+    markdown = report_path.read_text(encoding="utf-8")
+    assert "# DrugClaw Query Report" in markdown
+    assert "What does imatinib target?" in markdown
+    assert "imatinib -> ABL1" in markdown
+    assert "BindingDB" in markdown
 
 
-def test_query_logger_skips_html_report_when_not_requested(tmp_path: Path) -> None:
+def test_query_logger_skips_md_report_when_not_requested(tmp_path: Path) -> None:
     logger = QueryLogger(log_dir=str(tmp_path / "query_logs"))
 
     query_id = logger.log_query(
         "What does imatinib target?",
         _sample_result(),
-        save_html_report=False,
+        save_md_report=False,
     )
 
-    report_path = tmp_path / "query_logs" / query_id / "report.html"
+    report_path = tmp_path / "query_logs" / query_id / "report.md"
 
     assert not report_path.exists()

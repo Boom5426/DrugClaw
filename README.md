@@ -124,13 +124,13 @@ python -m drugclaw run --query "What does imatinib target?" --show-plan --show-c
 python -m drugclaw run --query "What prescribing and safety information is available for metformin?" --debug-agents
 ```
 
-If you want to save a local visual report for your own custom query:
+If you want to save a local Markdown report for your own custom query:
 
 ```bash
-python -m drugclaw run --query "What does imatinib target?" --save-html-report
+python -m drugclaw run --query "What does imatinib target?" --save-md-report
 ```
 
-This writes a single-file HTML report to `query_logs/<query_id>/report.html` and prints the saved path after the run finishes.
+This writes a Markdown report to `query_logs/<query_id>/report.md` and prints the saved path after the run finishes.
 
 If the demo runs successfully, you already have a minimal usable setup. The next step is optional and only matters when you want broader coverage from `LOCAL_FILE` skills and local datasets.
 

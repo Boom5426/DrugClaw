@@ -12,10 +12,10 @@ def test_run_query_does_not_print_answer_twice(monkeypatch, capsys) -> None:
             thinking_mode,
             resource_filter,
             verbose=True,
-            save_html_report=False,
+            save_md_report=False,
         ):
             assert verbose is False
-            assert save_html_report is False
+            assert save_md_report is False
             return {
                 "answer": "only-once",
                 "formatted_answer": "only-once",
@@ -48,10 +48,10 @@ def test_run_query_can_print_structured_evidence_summary(monkeypatch, capsys) ->
             thinking_mode,
             resource_filter,
             verbose=True,
-            save_html_report=False,
+            save_md_report=False,
         ):
             assert verbose is False
-            assert save_html_report is False
+            assert save_md_report is False
             return {
                 "answer": "answer-once",
                 "formatted_answer": "answer-once",
@@ -98,10 +98,10 @@ def test_run_query_can_print_plan_and_claim_summaries(monkeypatch, capsys) -> No
             thinking_mode,
             resource_filter,
             verbose=True,
-            save_html_report=False,
+            save_md_report=False,
         ):
             assert verbose is False
-            assert save_html_report is False
+            assert save_md_report is False
             return {
                 "answer": "answer-once",
                 "formatted_answer": "answer-once",
@@ -155,10 +155,10 @@ def test_run_query_can_enable_agent_debug_output(monkeypatch, capsys) -> None:
             thinking_mode,
             resource_filter,
             verbose=True,
-            save_html_report=False,
+            save_md_report=False,
         ):
             assert verbose is True
-            assert save_html_report is False
+            assert save_md_report is False
             print("[Retriever Agent] debug log")
             return {
                 "answer": "answer-once",
@@ -182,7 +182,7 @@ def test_run_query_can_enable_agent_debug_output(monkeypatch, capsys) -> None:
     assert "[Retriever Agent] debug log" in captured.out
 
 
-def test_run_query_can_print_saved_html_report_path(monkeypatch, capsys) -> None:
+def test_run_query_can_print_saved_md_report_path(monkeypatch, capsys) -> None:
     class FakeSystem:
         def __init__(self, config):
             self.config = config
@@ -193,15 +193,15 @@ def test_run_query_can_print_saved_html_report_path(monkeypatch, capsys) -> None
             thinking_mode,
             resource_filter,
             verbose=True,
-            save_html_report=False,
+            save_md_report=False,
         ):
             assert verbose is False
-            assert save_html_report is True
+            assert save_md_report is True
             return {
                 "answer": "answer-once",
                 "formatted_answer": "answer-once",
                 "success": True,
-                "html_report_path": "query_logs/query_1/report.html",
+                "md_report_path": "query_logs/query_1/report.md",
             }
 
     monkeypatch.setattr(cli, "_build_system", lambda key_file: FakeSystem(object()))
@@ -211,20 +211,20 @@ def test_run_query_can_print_saved_html_report_path(monkeypatch, capsys) -> None
         thinking_mode="simple",
         key_file="navigator_api_keys.json",
         resource_filter=["BindingDB"],
-        save_html_report=True,
+        save_md_report=True,
     )
 
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "HTML report saved to query_logs/query_1/report.html" in captured.out
+    assert "Markdown report saved to query_logs/query_1/report.md" in captured.out
 
 
-def test_run_parser_accepts_save_html_report_flag() -> None:
+def test_run_parser_accepts_save_md_report_flag() -> None:
     parser = cli.build_parser()
 
     args = parser.parse_args(
-        ["run", "--query", "What does imatinib target?", "--save-html-report"]
+        ["run", "--query", "What does imatinib target?", "--save-md-report"]
     )
 
-    assert args.save_html_report is True
+    assert args.save_md_report is True
