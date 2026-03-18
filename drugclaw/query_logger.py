@@ -36,7 +36,7 @@ class QueryLogger:
     """
 
     def __init__(self, log_dir: str = "./query_logs"):
-        self.log_dir = Path(log_dir)
+        self.log_dir = Path(log_dir).resolve()
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         # Global index for fast lookup
