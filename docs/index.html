@@ -640,9 +640,12 @@
       <div class="step">
         <div class="step-num">01</div>
         <div>
-          <h3>Install Dependencies</h3>
+          <h3>Create a `.venv` and Install Dependencies</h3>
           <div class="code-block">
-            <span class="cmd">pip install</span> langgraph openai
+            <span class="cmd">python3 -m venv .venv</span><br>
+            <span class="cmd">. .venv/bin/activate</span><br>
+            <span class="cmd">python -m pip install --upgrade pip</span><br>
+            <span class="cmd">python -m pip install -e .[dev] --no-build-isolation</span>
           </div>
         </div>
       </div>
@@ -651,8 +654,8 @@
         <div>
           <h3>Configure API Keys</h3>
           <div class="code-block">
-            <span class="cmd">cp</span> api_keys.example.json api_keys.json<br>
-            <span class="comment"># Edit api_keys.json with your credentials</span>
+            <span class="cmd">cp</span> navigator_api_keys.example.json navigator_api_keys.json<br>
+            <span class="comment"># Edit navigator_api_keys.json with your credentials</span>
           </div>
         </div>
       </div>
@@ -669,11 +672,11 @@
       <div class="step">
         <div class="step-num">04</div>
         <div>
-          <h3>Install CLI (Optional)</h3>
+          <h3>Use the Installed CLI</h3>
           <div class="code-block">
-            <span class="cmd">pip install</span> -e . --no-build-isolation<br>
             <span class="cmd">drugclaw</span> doctor<br>
-            <span class="cmd">drugclaw</span> list
+            <span class="cmd">drugclaw</span> list<br>
+            <span class="cmd">drugclaw</span> demo
           </div>
         </div>
       </div>
@@ -686,8 +689,9 @@
 <span class="comment"># Call DrugClaw from Python</span>
 <span class="cmd">from</span> drugclaw.config <span class="cmd">import</span> Config
 <span class="cmd">from</span> drugclaw.main_system <span class="cmd">import</span> DrugClawSystem
+<span class="cmd">from</span> drugclaw.models <span class="cmd">import</span> ThinkingMode
 
-config = Config(key_file=<span style="color:var(--yellow)">"api_keys.json"</span>)
+config = Config(key_file=<span style="color:var(--yellow)">"navigator_api_keys.json"</span>)
 system = DrugClawSystem(config)
 
 result = system.query(

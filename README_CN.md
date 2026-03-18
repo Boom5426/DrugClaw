@@ -41,28 +41,31 @@ DrugClaw 是一个围绕药物任务构建的多智能体 RAG 系统，专门处
 
 以下命令默认都在你刚 clone 下来的仓库根目录执行。
 
-### 1. 安装依赖
+### 1. 创建 `.venv` 并安装依赖
 
 ```bash
-pip install langgraph openai
+python3 -m venv .venv
+. .venv/bin/activate  # Windows: `.venv\\Scripts\\activate`
+python -m pip install --upgrade pip
+python -m pip install -e .[dev] --no-build-isolation
 ```
 
 可选依赖，仅在你要启用对应 CLI 型 skill 时安装：
 
 ```bash
-pip install chembl_webresource_client
-pip install libchebipy
-pip install bioservices
+python -m pip install chembl_webresource_client
+python -m pip install libchebipy
+python -m pip install bioservices
 ```
 
-### 2. 准备 `api_keys.json`
+### 2. 准备 `navigator_api_keys.json`
 
 DrugClaw 使用任何 **OpenAI 兼容** 的 API 端点，包括 OpenAI、Azure OpenAI、通过 vLLM 或 Ollama 提供的 LLaMA，以及其他 OpenAI 兼容的服务商。
 
 先复制模板文件：
 
 ```bash
-cp api_keys.example.json api_keys.json
+cp navigator_api_keys.example.json navigator_api_keys.json
 ```
 
 然后填写你自己的真实凭证：
@@ -87,6 +90,7 @@ cp api_keys.example.json api_keys.json
 | Ollama | `http://localhost:11434/v1` | `llama3.1`, `qwen2.5` |
 | Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-70B-Instruct-Turbo` |
 
+如果你必须继续使用其他文件名，例如 `api_keys.json`，请显式传入 `--key-file api_keys.json`。
 
 ### 3. 直接运行官方 CLI Demo
 
@@ -111,6 +115,21 @@ python -m drugclaw demo
 ```bash
 python -m drugclaw run --query "What are the known drug targets of imatinib?"
 ```
+
+如果你想在排查时看到规划结果、claim 摘要或 agent 日志，可以直接打开这些开关：
+
+```bash
+python -m drugclaw run --query "What does imatinib target?" --show-plan --show-claims
+python -m drugclaw run --query "What prescribing and safety information is available for metformin?" --debug-agents
+```
+
+如果你想把自己的问题额外保存成一份本地可视化报告，可以显式传入：
+
+```bash
+python -m drugclaw run --query "What does imatinib target?" --save-html-report
+```
+
+执行后会在 `query_logs/<query_id>/report.html` 生成单文件 HTML 报告，并在命令结束时打印保存路径。
 
 如果这里已经能跑通，你其实已经有了一条最小可用路径。下一步是增强项，主要用于提升覆盖面，并启用依赖本地数据的那些 skill。
 
@@ -141,10 +160,9 @@ python -m drugclaw run --query "What are the known drug targets of imatinib?"
 
 如果你想让更多 dataset/local-file 资源真正可用，或者希望检索更稳定、更全，再做这一步最合适。
 
-### 5. 安装后直接使用 `drugclaw` 命令
+### 5. 直接使用已安装的 `drugclaw` 命令
 
 ```bash
-pip install -e . --no-build-isolation
 git config core.hooksPath .githooks
 drugclaw list
 drugclaw doctor
@@ -177,7 +195,7 @@ python -m drugclaw doctor
 
 它会检查：
 
-- `api_keys.json`（或 `navigator_api_keys.json`）是否存在且字段完整
+- `navigator_api_keys.json` 是否存在且字段完整
 - `langgraph` 和 `openai` 是否可导入
 - 内置 demo 依赖的资源当前是否具备运行条件
 - 是否已经安装出 `drugclaw` 命令
@@ -214,7 +232,7 @@ from drugclaw.config import Config
 from drugclaw.main_system import DrugClawSystem
 from drugclaw.models import ThinkingMode
 
-config = Config(key_file="api_keys.json")
+config = Config(key_file="navigator_api_keys.json")
 system = DrugClawSystem(config)
 
 result = system.query(

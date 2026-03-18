@@ -137,6 +137,91 @@ def test_responder_reports_insufficient_evidence_instead_of_hallucinating() -> N
     assert "TTD" in updated.current_answer
 
 
+def test_responder_summarizes_repetitive_single_source_limitations() -> None:
+    responder = ResponderAgent(_LLMStub())
+    state = AgentState(original_query="What prescribing and safety information is available for metformin?")
+    state.evidence_items = [
+        EvidenceItem(
+            evidence_id="E1",
+            source_skill="DailyMed",
+            source_type="database",
+            source_title="DailyMed label",
+            source_locator="https://example.test/label-1",
+            snippet="Metformin official label for extended-release tablet with prescribing details.",
+            structured_payload={},
+            claim="metformin has_official_label Label A",
+            evidence_kind="label_text",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.91,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={},
+        ),
+        EvidenceItem(
+            evidence_id="E2",
+            source_skill="DailyMed",
+            source_type="database",
+            source_title="DailyMed label",
+            source_locator="https://example.test/label-2",
+            snippet="Metformin official label for film-coated tablet with prescribing details.",
+            structured_payload={},
+            claim="metformin has_official_label Label B",
+            evidence_kind="label_text",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.90,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={},
+        ),
+        EvidenceItem(
+            evidence_id="E3",
+            source_skill="DailyMed",
+            source_type="database",
+            source_title="DailyMed guidance",
+            source_locator="https://example.test/label-3",
+            snippet="Metformin guidance includes indications, warnings, and patient counseling details.",
+            structured_payload={},
+            claim="metformin has_patient_guidance patient guidance",
+            evidence_kind="label_text",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.89,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={},
+        ),
+        EvidenceItem(
+            evidence_id="E4",
+            source_skill="DailyMed",
+            source_type="database",
+            source_title="DailyMed interaction section",
+            source_locator="https://example.test/label-4",
+            snippet="Metformin label documents interaction precautions and monitoring recommendations.",
+            structured_payload={},
+            claim="metformin interacts_with drug interactions",
+            evidence_kind="label_text",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.88,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={},
+        ),
+    ]
+
+    updated = responder.execute_simple(state)
+
+    assert updated.final_answer_structured is not None
+    limitations = updated.final_answer_structured.limitations
+    assert any(
+        limitation.startswith("Multiple claims rely on a single source (4 claims).")
+        for limitation in limitations
+    )
+    assert not any(
+        limitation.startswith("Claim relies on a single source:")
+        for limitation in limitations
+    )
+    assert "Multiple claims rely on a single source (4 claims)." in updated.current_answer
+
+
 def test_responder_filters_target_lookup_noise_and_renders_target_summary() -> None:
     responder = ResponderAgent(_LLMStub())
     state = AgentState(original_query="What are the known drug targets of imatinib?")

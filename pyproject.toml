@@ -7,7 +7,10 @@ name = "drugclaw"
 version = "0.1.0"
 description = "Agentic system with Synaptic Navigation for Evidence-based Drug Reasoning"
 authors = [{name = "Qing Wang"}]
-dependencies = ["langgraph", "openai"]
+dependencies = ["langgraph", "openai", "requests"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
 
 [project.scripts]
 drugclaw = "drugclaw.cli:main"

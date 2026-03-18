@@ -1,4 +1,6 @@
+import importlib
 import json
+import sys
 from pathlib import Path
 
 from drugclaw import cli
@@ -165,3 +167,99 @@ def test_doctor_ignores_warnings_when_computing_exit_code(monkeypatch, capsys) -
     assert exit_code == 0
     assert "[WARN] resource:TTD: missing local metadata" in captured.out
     assert "Doctor result: setup looks usable." in captured.out
+
+
+def test_doctor_install_hint_accepts_current_python_environment(tmp_path: Path, monkeypatch) -> None:
+    venv_bin = tmp_path / "bin"
+    venv_bin.mkdir()
+    (venv_bin / "python").write_text("", encoding="utf-8")
+    (venv_bin / "drugclaw").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(cli.sys, "executable", str(venv_bin / "python"))
+    monkeypatch.setenv("PATH", "")
+
+    lines = cli._doctor_check_install_hint()
+
+    assert lines == ["[OK] cli_command: command available for the current Python environment"]
+
+
+def test_doctor_install_hint_uses_symlink_path_parent(tmp_path: Path, monkeypatch) -> None:
+    venv_bin = tmp_path / "bin"
+    venv_bin.mkdir()
+    target_python = venv_bin / "python3"
+    target_python.write_text("", encoding="utf-8")
+    (venv_bin / "python").symlink_to(target_python.name)
+    (venv_bin / "drugclaw").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(cli.sys, "executable", str(venv_bin / "python"))
+    monkeypatch.setenv("PATH", "")
+
+    lines = cli._doctor_check_install_hint()
+
+    assert lines == ["[OK] cli_command: command available for the current Python environment"]
+
+
+def test_cli_module_can_reload_without_main_system(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "drugclaw.main_system", None)
+
+    reloaded = importlib.reload(cli)
+
+    try:
+        parser = reloaded.build_parser()
+        args = parser.parse_args(["doctor"])
+        assert args.key_file == "navigator_api_keys.json"
+    finally:
+        importlib.reload(cli)
+
+
+def test_cli_help_prefers_navigator_key_filename() -> None:
+    parser = cli.build_parser()
+    run_help = parser._subparsers._group_actions[0].choices["run"].format_help()
+    doctor_help = parser._subparsers._group_actions[0].choices["doctor"].format_help()
+    list_help = parser._subparsers._group_actions[0].choices["list"].format_help()
+
+    assert "navigator_api_keys.json" in run_help
+    assert "navigator_api_keys.json" in doctor_help
+    normalized_list_help = " ".join(list_help.split())
+    assert "Path to navigator_api_keys.json. Use --key-file api_keys.json to override." in normalized_list_help
+    assert "Path to api_keys.json or navigator_api_keys.json." not in list_help
+
+
+def test_doctor_and_list_do_not_require_main_system(monkeypatch, capsys) -> None:
+    monkeypatch.setitem(sys.modules, "drugclaw.main_system", None)
+    reloaded = importlib.reload(cli)
+
+    try:
+        monkeypatch.setattr(reloaded, "_doctor_check_key_file", lambda key_file: ["[OK] key_file: ok"])
+        monkeypatch.setattr(reloaded, "_doctor_check_imports", lambda: ["[FAIL] langgraph: import failed (No module named 'langgraph')"])
+        monkeypatch.setattr(reloaded, "_doctor_check_registry", lambda key_file: ["[OK] registry: skipped"])
+        monkeypatch.setattr(reloaded, "_doctor_check_presets", lambda key_file: ["[OK] demo:label: available"])
+        monkeypatch.setattr(reloaded, "_doctor_check_install_hint", lambda: ["[OK] cli_command: command found on PATH"])
+        monkeypatch.setattr(reloaded, "_doctor_check_git_safety", lambda: ["[OK] tracked_key_file: not tracked"])
+        assert reloaded._run_doctor("navigator_api_keys.json") == 1
+
+        class _ResourceRegistryStub:
+            def summarize_registry(self):
+                return {
+                    "total_resources": 1,
+                    "enabled_resources": 1,
+                    "status_counts": {
+                        "ready": 1,
+                        "degraded": 0,
+                        "missing_metadata": 0,
+                        "missing_dependency": 0,
+                        "disabled": 0,
+                    },
+                }
+
+            def get_all_resources(self):
+                return []
+
+        monkeypatch.setattr(
+            reloaded,
+            "_load_registry_for_cli",
+            lambda key_file, strict_config=False: (object(), _ResourceRegistryStub()),
+        )
+        assert reloaded._run_list("navigator_api_keys.json") == 0
+    finally:
+        importlib.reload(cli)

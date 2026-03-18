@@ -3,6 +3,125 @@ from __future__ import annotations
 from drugclaw.response_formatter import wrap_answer_card
 
 
+def test_wrap_answer_card_prefers_structured_summary_confidence() -> None:
+    result = {
+        "query": "What prescribing and safety information is available for metformin?",
+        "mode": "simple",
+        "iterations": 0,
+        "evidence_graph_size": 0,
+        "final_reward": 0.0,
+        "resource_filter": ["DailyMed"],
+        "retrieved_content": [],
+        "final_answer_structured": {
+            "summary_confidence": 0.83,
+            "key_claims": [],
+            "evidence_items": [],
+            "citations": [],
+            "limitations": [],
+            "warnings": [],
+        },
+    }
+
+    formatted = wrap_answer_card("Metformin labeling answer", result)
+
+    assert "**Confidence**" in formatted
+    assert "(0.83)" in formatted
+    assert "HIGH" in formatted
+    assert "N/A" not in formatted
+
+
+def test_wrap_answer_card_truncates_long_source_list() -> None:
+    result = {
+        "query": "What prescribing and safety information is available for metformin?",
+        "mode": "simple",
+        "iterations": 0,
+        "evidence_graph_size": 0,
+        "final_reward": 0.0,
+        "resource_filter": ["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"],
+        "retrieved_content": [],
+        "final_answer_structured": {
+            "summary_confidence": 0.72,
+            "key_claims": [],
+            "evidence_items": [],
+            "citations": [
+                "[src:1] DailyMed — https://example.test/1",
+                "[src:2] DailyMed — https://example.test/2",
+                "[src:3] DailyMed — https://example.test/3",
+                "[src:4] DailyMed — https://example.test/4",
+                "[src:5] DailyMed — https://example.test/5",
+                "[src:6] openFDA Human Drug — https://example.test/6",
+                "[src:7] openFDA Human Drug — https://example.test/7",
+                "[src:8] MedlinePlus Drug Info — https://example.test/8",
+            ],
+            "limitations": [],
+            "warnings": [],
+        },
+    }
+
+    formatted = wrap_answer_card("Metformin labeling answer", result)
+
+    assert "## Sources" in formatted
+    assert "[src:1] DailyMed" in formatted
+    assert "[src:6] openFDA Human Drug" in formatted
+    assert "[src:7] openFDA Human Drug" not in formatted
+    assert "[src:8] MedlinePlus Drug Info" not in formatted
+    assert "Showing 6 of 8 sources; 2 more omitted." in formatted
+
+
+def test_wrap_answer_card_collapses_duplicate_evidence_rows() -> None:
+    result = {
+        "query": "What prescribing and safety information is available for metformin?",
+        "mode": "simple",
+        "iterations": 0,
+        "evidence_graph_size": 0,
+        "final_reward": 0.0,
+        "resource_filter": ["openFDA Human Drug"],
+        "retrieved_content": [],
+        "final_answer_structured": {
+            "summary_confidence": 0.72,
+            "key_claims": [],
+            "evidence_items": [
+                {
+                    "source_skill": "openFDA Human Drug",
+                    "source_locator": "openFDA Human Drug",
+                    "metadata": {
+                        "source_entity": "Metformin Hydrochloride",
+                        "relationship": "has_adverse_reaction",
+                        "target_entity": "adverse reactions",
+                    },
+                    "confidence": 0.86,
+                },
+                {
+                    "source_skill": "openFDA Human Drug",
+                    "source_locator": "openFDA Human Drug",
+                    "metadata": {
+                        "source_entity": "Metformin Hydrochloride",
+                        "relationship": "has_adverse_reaction",
+                        "target_entity": "adverse reactions",
+                    },
+                    "confidence": 0.86,
+                },
+                {
+                    "source_skill": "openFDA Human Drug",
+                    "source_locator": "openFDA Human Drug",
+                    "metadata": {
+                        "source_entity": "Metformin Hydrochloride",
+                        "relationship": "has_adverse_reaction",
+                        "target_entity": "adverse reactions",
+                    },
+                    "confidence": 0.86,
+                },
+            ],
+            "citations": ["[openfda:1] openFDA Human Drug — openFDA Human Drug"],
+        },
+    }
+
+    formatted = wrap_answer_card("Metformin labeling answer", result)
+
+    assert formatted.count("| 1 | openFDA Human Drug | Metformin Hydrochloride | has_adverse_reaction | adverse reactions | 0.86 | openFDA Human Drug (+2 similar records) |") == 1
+    assert "| 2 | openFDA Human Drug | Metformin Hydrochloride | has_adverse_reaction | adverse reactions | 0.86 | openFDA Human Drug |" not in formatted
+
+
 def test_wrap_answer_card_prefers_structured_evidence_items() -> None:
     result = {
         "query": "What are the known drug targets of imatinib?",

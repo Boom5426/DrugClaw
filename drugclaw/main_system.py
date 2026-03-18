@@ -132,7 +132,7 @@ class DrugClawSystem:
                        ──(mode=web_only)──────► web_search_direct
 
           plan ──► retrieve ──► normalize_evidence
-          normalize_evidence ──(graph)──► optional_graph ──► graph_build ──► rerank ──► assess_claims ──► respond ──► finalize
+          normalize_evidence ──(graph)──► optional_graph ──► graph_build ──► rerank ──► assess_claims ──► respond ──► reflect ──► [web_search] ──► finalize
                                            └──────────────► assess_claims
                              ──(simple)──► assess_claims ──► simple_respond ──► finalize
 
@@ -150,6 +150,7 @@ class DrugClawSystem:
         wf.add_node("rerank",             self._rerank_node)
         wf.add_node("assess_claims",      self._assess_claims_node)
         wf.add_node("respond",            self._respond_node)
+        wf.add_node("reflect",           self._reflect_node)
         wf.add_node("web_search",         self._web_search_node)
         wf.add_node("simple_respond",     self._simple_respond_node)
         wf.add_node("web_search_direct",  self._web_search_direct_node)
@@ -179,7 +180,7 @@ class DrugClawSystem:
             {"graph_build": "graph_build", "assess_claims": "assess_claims"},
         )
 
-        # graph mode pipeline: graph_build → rerank → assess_claims → respond
+        # graph mode pipeline: graph_build → rerank → assess_claims → respond → reflect
         wf.add_edge("graph_build", "rerank")
         wf.add_edge("rerank",     "assess_claims")
         wf.add_conditional_edges(
@@ -187,9 +188,15 @@ class DrugClawSystem:
             self._after_assessment,
             {"respond": "respond", "simple_respond": "simple_respond"},
         )
+        wf.add_edge("respond", "reflect")
+        wf.add_conditional_edges(
+            "reflect",
+            self._after_reflect,
+            {"web_search": "web_search", "finalize": "finalize"},
+        )
 
         # simple / web_only termination
-        wf.add_edge("respond",           "finalize")
+        wf.add_edge("web_search",        "finalize")
         wf.add_edge("simple_respond",    "finalize")
         wf.add_edge("web_search_direct", "finalize")
         wf.add_edge("finalize",          END)
@@ -201,14 +208,18 @@ class DrugClawSystem:
     # ------------------------------------------------------------------
 
     def _route_by_mode(self, state: AgentState) -> str:
-        mode = getattr(state, "thinking_mode", ThinkingMode.GRAPH)
-        if str(mode) == ThinkingMode.WEB_ONLY:
+        mode = self._normalize_thinking_mode(
+            getattr(state, "thinking_mode", ThinkingMode.GRAPH)
+        )
+        if mode == ThinkingMode.WEB_ONLY.value:
             return "web_search_direct"
         return "plan"
 
     def _after_normalize_evidence(self, state: AgentState) -> str:
-        mode = getattr(state, "thinking_mode", ThinkingMode.GRAPH)
-        if str(mode) == ThinkingMode.GRAPH:
+        mode = self._normalize_thinking_mode(
+            getattr(state, "thinking_mode", ThinkingMode.GRAPH)
+        )
+        if mode == ThinkingMode.GRAPH.value:
             return "optional_graph"
         return "assess_claims"
 
@@ -218,10 +229,20 @@ class DrugClawSystem:
         return "assess_claims"
 
     def _after_assessment(self, state: AgentState) -> str:
-        mode = getattr(state, "thinking_mode", ThinkingMode.GRAPH)
-        if str(mode) == ThinkingMode.SIMPLE:
+        mode = self._normalize_thinking_mode(
+            getattr(state, "thinking_mode", ThinkingMode.GRAPH)
+        )
+        if mode == ThinkingMode.SIMPLE.value:
             return "simple_respond"
         return "respond"
+
+    @staticmethod
+    def _after_reflect(state: AgentState) -> str:
+        if getattr(state, "should_continue", False) and not getattr(
+            state, "max_iterations_reached", False
+        ):
+            return "web_search"
+        return "finalize"
 
     # ------------------------------------------------------------------
     # Node wrappers
@@ -229,7 +250,9 @@ class DrugClawSystem:
 
     def _entry_router_node(self, state: AgentState) -> AgentState:
         """Passthrough — routing happens in the conditional edge above."""
-        mode = getattr(state, "thinking_mode", ThinkingMode.GRAPH)
+        mode = self._normalize_thinking_mode(
+            getattr(state, "thinking_mode", ThinkingMode.GRAPH)
+        )
         rf   = getattr(state, "resource_filter", [])
         print(f"\n[DrugClaw] mode={mode}"
               + (f"  resource_filter={rf}" if rf else ""))
@@ -282,6 +305,7 @@ class DrugClawSystem:
         return self.responder.execute(state)
 
     def _reflect_node(self, state: AgentState) -> AgentState:
+        self._record_stage(state, "REFLECT")
         state = self.reflector.execute(state)
         step = ReasoningStep(
             step_id=state.iteration,
@@ -297,6 +321,7 @@ class DrugClawSystem:
 
     def _web_search_node(self, state: AgentState) -> AgentState:
         """Graph-mode web search (triggered by reflector when evidence is lacking)."""
+        self._record_stage(state, "WEB_SEARCH")
         return self.web_search.execute(state)
 
     def _simple_respond_node(self, state: AgentState) -> AgentState:
@@ -363,6 +388,21 @@ class DrugClawSystem:
             parts.append(f"Tissues: {', '.join(constraints.tissue_types)}")
         return "\n".join(parts) if parts else "No specific constraints."
 
+    @staticmethod
+    def _normalize_thinking_mode(thinking_mode: str | ThinkingMode) -> str:
+        if isinstance(thinking_mode, ThinkingMode):
+            return thinking_mode.value
+
+        normalized = str(thinking_mode).strip().lower()
+        allowed = {mode.value for mode in ThinkingMode}
+        if normalized in allowed:
+            return normalized
+
+        raise ValueError(
+            "Invalid thinking_mode. Expected one of: "
+            + ", ".join(sorted(allowed))
+        )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -371,10 +411,11 @@ class DrugClawSystem:
         self,
         query: str,
         omics_constraints: Optional[OmicsConstraints] = None,
-        thinking_mode: str = ThinkingMode.GRAPH,
+        thinking_mode: str | ThinkingMode = ThinkingMode.GRAPH,
         resource_filter: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         verbose: bool = True,
+        save_html_report: bool = False,
     ) -> Dict[str, Any]:
         """
         Execute a drug-related query.
@@ -383,7 +424,8 @@ class DrugClawSystem:
         ----------
         query            : Natural language question.
         omics_constraints: Optional biological constraints (gene sets, pathways, …).
-        thinking_mode    : One of ThinkingMode.GRAPH (default), .SIMPLE, .WEB_ONLY.
+        thinking_mode    : One of "graph" | "simple" | "web_only", or the
+                           corresponding ThinkingMode enum value.
         resource_filter  : Optional list of skill names to restrict retrieval
                            (e.g. ["ChEMBL", "DGIdb"]).  When provided, the LLM
                            skill-selection step is bypassed.
@@ -395,17 +437,18 @@ class DrugClawSystem:
                         final_reward, reasoning_history, retrieved_content,
                         web_search_results, success, [query_id]
         """
-        initial_state = AgentState(
-            original_query=query,
-            omics_constraints=omics_constraints,
-            thinking_mode=str(thinking_mode),
-            resource_filter=resource_filter or [],
-        )
-
+        normalized_mode: str | None = None
         try:
+            normalized_mode = self._normalize_thinking_mode(thinking_mode)
+            initial_state = AgentState(
+                original_query=query,
+                omics_constraints=omics_constraints,
+                thinking_mode=normalized_mode,
+                resource_filter=resource_filter or [],
+            )
             if verbose:
                 print(f"\n{'='*80}")
-                print(f"QUERY [{thinking_mode}]: {query}")
+                print(f"QUERY [{normalized_mode}]: {query}")
                 if resource_filter:
                     print(f"RESOURCE FILTER: {resource_filter}")
                 print(f"{'='*80}\n")
@@ -440,7 +483,7 @@ class DrugClawSystem:
                     assessment.to_dict() if hasattr(assessment, "to_dict") else assessment
                     for assessment in final.get("claim_assessments", [])
                 ],
-                "mode":               thinking_mode,
+                "mode":               normalized_mode,
                 "resource_filter":    resource_filter or [],
                 "iterations":         iteration,
                 "evidence_graph_size": subgraph_size,
@@ -478,11 +521,27 @@ class DrugClawSystem:
 
             if self.enable_logging and self.logger:
                 if verbose:
-                    result["query_id"] = self.logger.log_query(query, result, metadata)
+                    result["query_id"] = self.logger.log_query(
+                        query,
+                        result,
+                        metadata,
+                        save_html_report=save_html_report,
+                    )
                 else:
                     sink = StringIO()
                     with redirect_stdout(sink), redirect_stderr(sink):
-                        result["query_id"] = self.logger.log_query(query, result, metadata)
+                        result["query_id"] = self.logger.log_query(
+                            query,
+                            result,
+                            metadata,
+                            save_html_report=save_html_report,
+                        )
+                if save_html_report:
+                    html_report_path = self.logger.get_query_report_html_path(
+                        result["query_id"]
+                    )
+                    if html_report_path:
+                        result["html_report_path"] = html_report_path
 
             return result
 
@@ -493,7 +552,7 @@ class DrugClawSystem:
             return {
                 "query":   query,
                 "answer":  f"Error: {exc}",
-                "mode":    thinking_mode,
+                "mode":    normalized_mode if normalized_mode is not None else str(thinking_mode),
                 "success": False,
             }
 

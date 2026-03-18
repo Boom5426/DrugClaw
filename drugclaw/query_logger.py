@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 from .response_formatter import (
     format_reasoning_trace,
     format_source_citations,
+    render_answer_report_html,
     wrap_answer_card,
 )
 
@@ -67,6 +68,7 @@ class QueryLogger:
         query: str,
         result: Dict[str, Any],
         metadata: Optional[Dict[str, Any]] = None,
+        save_html_report: bool = False,
     ) -> str:
         """
         Log a query and its results into a dedicated folder.
@@ -85,6 +87,10 @@ class QueryLogger:
         # ── 1. answer.md — rich Markdown answer card ────────────────
         md_answer = wrap_answer_card(answer, result, timestamp)
         (query_dir / "answer.md").write_text(md_answer, encoding="utf-8")
+
+        if save_html_report:
+            html_report = render_answer_report_html(result, timestamp)
+            (query_dir / "report.html").write_text(html_report, encoding="utf-8")
 
         # ── 2. metadata.json — query metadata + metrics ─────────────
         meta = {
@@ -224,6 +230,13 @@ class QueryLogger:
         md_file = self.log_dir / query_id / "reasoning_trace.md"
         if md_file.exists():
             return md_file.read_text(encoding="utf-8")
+        return None
+
+    def get_query_report_html_path(self, query_id: str) -> Optional[str]:
+        """Return the saved HTML report path for a query if present."""
+        html_file = self.log_dir / query_id / "report.html"
+        if html_file.exists():
+            return str(html_file)
         return None
 
     def get_recent_queries(self, n: int = 10) -> List[Dict[str, Any]]:

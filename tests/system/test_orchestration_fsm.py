@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import drugclaw.main_system as main_system_module
 from drugclaw.agent_retriever import RetrieverAgent
-from drugclaw.models import AgentState
+from drugclaw.models import AgentState, ThinkingMode
 from drugclaw.query_plan import QueryPlan
 
 
@@ -661,6 +661,46 @@ class _VerboseResponderNodeStub(_NoOpAgent):
         return state
 
 
+class _ModeAwareResponderNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.current_answer = "graph-answer"
+        return state
+
+    def execute_simple(self, state):
+        state.current_answer = "simple-answer"
+        return state
+
+
+class _ReflectContinueNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.should_continue = True
+        state.max_iterations_reached = False
+        state.evidence_sufficient = False
+        state.current_reward = 0.4
+        state.reflection_feedback = "Need supporting web evidence."
+        return state
+
+
+class _ReflectStopNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.should_continue = False
+        state.max_iterations_reached = False
+        state.evidence_sufficient = True
+        state.current_reward = 0.8
+        state.reflection_feedback = "Current evidence is sufficient."
+        return state
+
+
+class _WebSearchNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.current_answer += "\nweb-evidence"
+        return state
+
+    def execute_direct(self, state):
+        state.current_answer = "web-only-answer"
+        return state
+
+
 class _WebSkillStub:
     pass
 
@@ -739,6 +779,101 @@ def test_graph_mode_skips_graph_when_plan_and_evidence_do_not_require_it(monkeyp
 
     assert result["success"] is True
     assert "OPTIONAL_GRAPH:skipped" in result["execution_trace"]
+
+
+def test_query_accepts_thinking_mode_enum_for_simple(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ModeAwareResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query("What does imatinib target?", thinking_mode=ThinkingMode.SIMPLE)
+
+    assert result["success"] is True
+    assert result["mode"] == "simple"
+    assert result["answer"] == "simple-answer"
+
+
+def test_query_accepts_thinking_mode_enum_for_web_only(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ModeAwareResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query("What does imatinib target?", thinking_mode=ThinkingMode.WEB_ONLY)
+
+    assert result["success"] is True
+    assert result["mode"] == "web_only"
+    assert result["answer"] == "web-only-answer"
+
+
+def test_query_accepts_thinking_mode_enum_for_graph(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "PlannerAgent", _PlannerNodeStub)
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ModeAwareResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _ReflectStopNodeStub)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query(
+        "What prescribing and safety information is available for metformin?",
+        thinking_mode=ThinkingMode.GRAPH,
+    )
+
+    assert result["success"] is True
+    assert result["mode"] == "graph"
+    assert result["answer"] == "graph-answer"
+    assert "REFLECT" in result["execution_trace"]
+    assert "WEB_SEARCH" not in result["execution_trace"]
+
+
+def test_graph_mode_records_reflect_and_web_search_when_reflection_requests_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "PlannerAgent", _PlannerNodeStub)
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ModeAwareResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _ReflectContinueNodeStub)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query(
+        "What prescribing and safety information is available for metformin?",
+        thinking_mode="graph",
+    )
+
+    assert result["success"] is True
+    assert "REFLECT" in result["execution_trace"]
+    assert "WEB_SEARCH" in result["execution_trace"]
+    assert result["answer"].endswith("web-evidence")
 
 
 def test_query_verbose_false_suppresses_agent_logs(monkeypatch, capsys) -> None:

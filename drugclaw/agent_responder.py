@@ -578,6 +578,8 @@ Formatting requirements:
         evidence_items,
     ) -> List[str]:
         limitations: List[str] = []
+        single_source_claims: List[str] = []
+        predictive_only_claims: List[str] = []
         for assessment in assessments:
             limitations.extend(assessment.limitations)
 
@@ -593,9 +595,26 @@ Formatting requirements:
             if len(unique_sources) == 1 and not any(
                 claim.claim in limitation for limitation in limitations
             ):
-                limitations.append(f"Claim relies on a single source: {claim.claim}")
+                single_source_claims.append(claim.claim)
             if all(item.evidence_kind == "model_prediction" for item in claim_items):
-                limitations.append(f"Claim is supported only by predictive evidence: {claim.claim}")
+                predictive_only_claims.append(claim.claim)
+
+        if single_source_claims:
+            limitations.extend(
+                ResponderAgent._summarize_claim_limitations(
+                    single_source_claims,
+                    singular_prefix="Claim relies on a single source",
+                    plural_prefix="Multiple claims rely on a single source",
+                )
+            )
+        if predictive_only_claims:
+            limitations.extend(
+                ResponderAgent._summarize_claim_limitations(
+                    predictive_only_claims,
+                    singular_prefix="Claim is supported only by predictive evidence",
+                    plural_prefix="Multiple claims are supported only by predictive evidence",
+                )
+            )
         return ResponderAgent._dedupe_preserve_order(limitations)
 
     @staticmethod
@@ -837,3 +856,23 @@ Formatting requirements:
             seen.add(normalized)
             deduped.append(normalized)
         return deduped
+
+    @staticmethod
+    def _summarize_claim_limitations(
+        claims: List[str],
+        *,
+        singular_prefix: str,
+        plural_prefix: str,
+        max_examples: int = 3,
+    ) -> List[str]:
+        normalized_claims = ResponderAgent._dedupe_preserve_order(claims)
+        if not normalized_claims:
+            return []
+        if len(normalized_claims) == 1:
+            return [f"{singular_prefix}: {normalized_claims[0]}"]
+
+        examples = normalized_claims[:max_examples]
+        summary = f"{plural_prefix} ({len(normalized_claims)} claims)."
+        if examples:
+            summary += f" Examples: {'; '.join(examples)}."
+        return [summary]

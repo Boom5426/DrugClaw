@@ -141,7 +141,7 @@ Provide your evaluation in JSON format:
             marginal_gain < self.config.EVIDENCE_THRESHOLD_EPSILON
         )
         
-        max_iterations_reached = state.iteration >= self.config.MAX_ITERATIONS
+        max_iterations_reached = state.iteration >= max(self.config.MAX_ITERATIONS, 1)
         
         if stop_iteration or max_iterations_reached:
             state.should_continue = False

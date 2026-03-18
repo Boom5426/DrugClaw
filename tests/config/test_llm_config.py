@@ -81,3 +81,34 @@ def test_llm_client_uses_file_driven_timeout(monkeypatch, tmp_path: Path) -> Non
     assert captured["base_url"] == "https://provider.example.com/v1"
     assert captured["timeout"] == 123
     assert client.model == "custom-model"
+
+
+def test_config_defaults_graph_iterations_to_two(tmp_path: Path) -> None:
+    key_file = tmp_path / "config.json"
+    _write_json(
+        key_file,
+        {
+            "api_key": "new-key",
+            "base_url": "https://provider.example.com/v1",
+        },
+    )
+
+    config = Config(key_file=str(key_file))
+
+    assert config.MAX_ITERATIONS == 2
+
+
+def test_config_accepts_explicit_api_keys_filename(tmp_path: Path) -> None:
+    key_file = tmp_path / "api_keys.json"
+    _write_json(
+        key_file,
+        {
+            "api_key": "new-key",
+            "base_url": "https://provider.example.com/v1",
+        },
+    )
+
+    config = Config(key_file=str(key_file))
+
+    assert config.OPENAI_API_KEY == "new-key"
+    assert config.base_url == "https://provider.example.com/v1"

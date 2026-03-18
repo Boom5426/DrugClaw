@@ -38,7 +38,7 @@ class Config:
         self.TIMEOUT = data.get("timeout", 60)
 
         # System parameters
-        self.MAX_ITERATIONS = 0
+        self.MAX_ITERATIONS = 2
         self.EVIDENCE_THRESHOLD_EPSILON = 0.1  # Minimum marginal information gain
         self.MIN_EVIDENCE_SCORE = 0.7  # Minimum evidence sufficiency score
         self.MAX_SUBGRAPH_SIZE = 100  # Maximum entities in evidence subgraph

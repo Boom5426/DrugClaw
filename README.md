@@ -41,28 +41,31 @@ In short, DrugClaw is not trying to be just another fluent assistant. Its goal i
 
 Run the commands below from the cloned repository root.
 
-### 1. Install dependencies
+### 1. Create a `.venv` and install dependencies
 
 ```bash
-pip install langgraph openai
+python3 -m venv .venv
+. .venv/bin/activate  # Windows: `.venv\\Scripts\\activate`
+python -m pip install --upgrade pip
+python -m pip install -e .[dev] --no-build-isolation
 ```
 
 Optional dependencies for selected CLI-based skills:
 
 ```bash
-pip install chembl_webresource_client
-pip install libchebipy
-pip install bioservices
+python -m pip install chembl_webresource_client
+python -m pip install libchebipy
+python -m pip install bioservices
 ```
 
-### 2. Prepare `api_keys.json`
+### 2. Prepare `navigator_api_keys.json`
 
 DrugClaw uses any **OpenAI-compatible** API endpoint. This includes OpenAI, Azure OpenAI, LLaMA served via vLLM or Ollama, and other OpenAI-compatible providers.
 
 First copy the template:
 
 ```bash
-cp api_keys.example.json api_keys.json
+cp navigator_api_keys.example.json navigator_api_keys.json
 ```
 
 Then fill in your real credentials:
@@ -88,6 +91,7 @@ Then fill in your real credentials:
 | Ollama | `http://localhost:11434/v1` | `llama3.1`, `qwen2.5` |
 | Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-70B-Instruct-Turbo` |
 
+If you must keep a non-default filename such as `api_keys.json`, pass it explicitly with `--key-file api_keys.json`.
 
 ### 3. Run the official CLI demo
 
@@ -112,6 +116,21 @@ You can also run your own query:
 ```bash
 python -m drugclaw run --query "What are the known drug targets of imatinib?"
 ```
+
+If you want to inspect the internal planner, claim summaries, or agent logs while debugging:
+
+```bash
+python -m drugclaw run --query "What does imatinib target?" --show-plan --show-claims
+python -m drugclaw run --query "What prescribing and safety information is available for metformin?" --debug-agents
+```
+
+If you want to save a local visual report for your own custom query:
+
+```bash
+python -m drugclaw run --query "What does imatinib target?" --save-html-report
+```
+
+This writes a single-file HTML report to `query_logs/<query_id>/report.html` and prints the saved path after the run finishes.
 
 If the demo runs successfully, you already have a minimal usable setup. The next step is optional and only matters when you want broader coverage from `LOCAL_FILE` skills and local datasets.
 
@@ -142,10 +161,9 @@ If some old `SKILL.md`, `example.py`, or archived docs still show absolute paths
 
 Downloading local resources is recommended if you want more stable retrieval from dataset-backed skills and better overall coverage than the minimal online-first demo path.
 
-### 5. Install the `drugclaw` command
+### 5. Use the installed `drugclaw` command
 
 ```bash
-pip install -e . --no-build-isolation
 git config core.hooksPath .githooks
 drugclaw list
 drugclaw doctor
@@ -178,7 +196,7 @@ python -m drugclaw doctor
 
 It checks:
 
-- whether `api_keys.json` (or `navigator_api_keys.json`) exists and is complete
+- whether `navigator_api_keys.json` exists and is complete
 - whether `langgraph` and `openai` are importable
 - whether built-in demo presets have the resources they need
 - whether the `drugclaw` command is installed
@@ -212,7 +230,7 @@ from drugclaw.config import Config
 from drugclaw.main_system import DrugClawSystem
 from drugclaw.models import ThinkingMode
 
-config = Config(key_file="api_keys.json")
+config = Config(key_file="navigator_api_keys.json")
 system = DrugClawSystem(config)
 
 result = system.query(
