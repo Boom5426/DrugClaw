@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import drugclaw.main_system as main_system_module
 from drugclaw.agent_retriever import RetrieverAgent
 from drugclaw.models import AgentState
 from drugclaw.query_plan import QueryPlan
@@ -94,3 +95,64 @@ def test_retriever_prefers_resource_filter_over_query_plan_hints() -> None:
 
     assert "DrugBank" in updated.retrieved_text
     assert "BindingDB" not in updated.retrieved_text
+
+
+class _NoOpAgent:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def execute(self, state):
+        return state
+
+
+class _RetrieverNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.retrieved_text = "retrieved"
+        return state
+
+
+class _ResponderNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.current_answer = "answer"
+        return state
+
+    def execute_simple(self, state):
+        state.current_answer = "answer"
+        return state
+
+
+class _WebSkillStub:
+    pass
+
+
+class _RuntimeRegistryStub:
+    def get_skill(self, name):
+        if name == "WebSearch":
+            return _WebSkillStub()
+        return None
+
+
+def test_simple_mode_uses_explicit_stage_trace(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query("What does imatinib target?", thinking_mode="simple")
+
+    assert result["success"] is True
+    assert result["execution_trace"] == [
+        "PLAN",
+        "RETRIEVE",
+        "NORMALIZE_EVIDENCE",
+        "ASSESS_CLAIMS",
+        "ANSWER",
+    ]
