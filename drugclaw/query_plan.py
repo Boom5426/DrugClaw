@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List
 
@@ -74,6 +75,9 @@ def is_direct_target_lookup(*, query: str = "", question_type: str = "") -> bool
     lowered_query = str(query).strip().lower()
     if not lowered_query:
         return False
+
+    if re.search(r"\bdoes\s+[a-z0-9\-]+\s+target\b", lowered_query):
+        return True
 
     return any(
         marker in lowered_query

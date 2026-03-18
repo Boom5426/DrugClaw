@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from .base import RAGSkill, RetrievalResult
@@ -181,8 +182,7 @@ class SkillRegistry:
         for node in self.skill_tree.all_skill_nodes():
             node.implemented = node.name in registered
 
-        q = query.lower()
-        keywords = set(q.split())
+        keywords = self._query_keywords(query)
 
         scored: Dict[str, int] = {}
         for sc in self.skill_tree.subcategories:
@@ -214,8 +214,7 @@ class SkillRegistry:
         ]
         if not query:
             return names
-        q = query.lower()
-        keywords = set(q.split())
+        keywords = self._query_keywords(query)
         scored = {}
         for name in names:
             node = self.skill_tree.get_node(name)
@@ -223,6 +222,10 @@ class SkillRegistry:
                 text = (node.aim + " " + node.data_range).lower()
                 scored[name] = sum(1 for kw in keywords if kw in text)
         return sorted(names, key=lambda n: -scored.get(n, 0))
+
+    @staticmethod
+    def _query_keywords(query: str) -> set[str]:
+        return set(re.findall(r"[a-z0-9][a-z0-9\-]*", query.lower()))
 
     # ------------------------------------------------------------------
     # Skill descriptions & example code for Code Agent

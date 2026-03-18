@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from drugclaw.agent_planner import PlannerAgent
-from drugclaw.query_plan import build_fallback_query_plan
+from drugclaw.query_plan import build_fallback_query_plan, is_direct_target_lookup
 from drugclaw.resource_registry import ResourceEntry, ResourceRegistry
 
 
@@ -40,6 +40,10 @@ def test_planner_classifies_direct_target_lookup_without_graph() -> None:
 
     assert plan.question_type == "target_lookup"
     assert plan.requires_graph_reasoning is False
+
+
+def test_direct_target_lookup_recognizes_does_target_question() -> None:
+    assert is_direct_target_lookup(query="What does imatinib target?") is True
 
 
 def test_planner_marks_label_query_as_non_graph_lookup() -> None:
