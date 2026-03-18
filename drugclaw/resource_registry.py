@@ -43,12 +43,43 @@ class ResourceEntry:
 class ResourceRegistry:
     def __init__(self, entries: Iterable[ResourceEntry]):
         self._entries = sorted(entries, key=lambda entry: (entry.category, entry.name))
+        self._entries_by_name = {entry.name: entry for entry in self._entries}
 
     def get_all_resources(self) -> List[ResourceEntry]:
         return list(self._entries)
 
     def get_enabled_resources(self) -> List[ResourceEntry]:
         return [entry for entry in self._entries if entry.enabled]
+
+    def get_resource(self, name: str) -> Optional[ResourceEntry]:
+        return self._entries_by_name.get(name)
+
+    def prioritize_resource_names(
+        self,
+        names: Iterable[str],
+        *,
+        ready_only: bool = False,
+    ) -> List[str]:
+        seen = set()
+        ranked: List[tuple[int, int, int, str]] = []
+        for index, name in enumerate(names):
+            if name in seen:
+                continue
+            seen.add(name)
+            entry = self.get_resource(name)
+            if entry is None:
+                continue
+            if ready_only and entry.status != "ready":
+                continue
+            ranked.append(
+                (
+                    _status_priority(entry.status),
+                    _access_priority(entry.access_mode),
+                    index,
+                    entry.name,
+                )
+            )
+        return [name for _, _, _, name in sorted(ranked)]
 
     def summarize_registry(self) -> Dict[str, Any]:
         status_counts = {status: 0 for status in RESOURCE_STATUSES}
@@ -225,3 +256,24 @@ def _resource_id(name: str) -> str:
     while "__" in cleaned:
         cleaned = cleaned.replace("__", "_")
     return cleaned.strip("_")
+
+
+def _status_priority(status: str) -> int:
+    order = {
+        "ready": 0,
+        "degraded": 1,
+        "missing_dependency": 2,
+        "missing_metadata": 3,
+        "disabled": 4,
+    }
+    return order.get(status, 99)
+
+
+def _access_priority(access_mode: str) -> int:
+    order = {
+        "REST_API": 0,
+        "CLI": 0,
+        "LOCAL_FILE": 1,
+        "DATASET": 2,
+    }
+    return order.get(access_mode, 3)

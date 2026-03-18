@@ -33,10 +33,12 @@ class RetrieverAgent:
         llm_client: LLMClient,
         skill_registry: SkillRegistry,
         coder_agent: Optional[CoderAgent] = None,
+        resource_registry=None,
     ):
         self.llm = llm_client
         self.skill_registry = skill_registry
         self.coder = coder_agent or CoderAgent(llm_client, skill_registry)
+        self.resource_registry = resource_registry
 
     # ------------------------------------------------------------------
     # Prompt builders
@@ -268,12 +270,15 @@ Provide your plan in JSON format:
         *,
         resource_filter: List[str],
     ) -> Dict[str, Any]:
-        selected_skills = list(resource_filter or plan.preferred_skills)
-        selected_skills = self._filter_available_skills(selected_skills)
-        if not selected_skills and not resource_filter:
-            selected_skills = self._filter_available_skills(
-                self.skill_registry.get_skills_for_query(query)[:3]
+        if resource_filter:
+            selected_skills = self._filter_available_skills(list(resource_filter))
+        else:
+            combined_skill_hints = list(plan.preferred_skills) + list(
+                self.skill_registry.get_skills_for_query(query)
             )
+            selected_skills = self._filter_available_skills(combined_skill_hints)
+            if selected_skills:
+                selected_skills = selected_skills[:3]
 
         return {
             "key_entities": dict(plan.entities),
@@ -285,6 +290,11 @@ Provide your plan in JSON format:
         if not skill_names:
             return []
 
+        prioritized = self._prioritize_skill_names(skill_names, ready_only=True)
+        if prioritized:
+            return prioritized
+
+        skill_names = self._prioritize_skill_names(skill_names, ready_only=False)
         available: List[str] = []
         for skill_name in skill_names:
             try:
@@ -304,6 +314,64 @@ Provide your plan in JSON format:
                 available.append(skill_name)
 
         return available
+
+    def _prioritize_skill_names(
+        self,
+        skill_names: List[str],
+        *,
+        ready_only: bool,
+    ) -> List[str]:
+        unique_names = list(dict.fromkeys(skill_names))
+        if not unique_names or self.resource_registry is None:
+            return unique_names if not ready_only else []
+
+        if hasattr(self.resource_registry, "prioritize_resource_names"):
+            ranked = self.resource_registry.prioritize_resource_names(
+                unique_names,
+                ready_only=ready_only,
+            )
+            if ranked:
+                return ranked
+
+        ranked = []
+        for index, skill_name in enumerate(unique_names):
+            entry = getattr(self.resource_registry, "get_resource", lambda _: None)(skill_name)
+            if entry is None:
+                continue
+            status = getattr(entry, "status", "")
+            access_mode = getattr(entry, "access_mode", "")
+            if ready_only and status != "ready":
+                continue
+            ranked.append(
+                (
+                    self._status_priority(status),
+                    self._access_priority(access_mode),
+                    index,
+                    skill_name,
+                )
+            )
+        return [name for _, _, _, name in sorted(ranked)]
+
+    @staticmethod
+    def _status_priority(status: str) -> int:
+        order = {
+            "ready": 0,
+            "degraded": 1,
+            "missing_dependency": 2,
+            "missing_metadata": 3,
+            "disabled": 4,
+        }
+        return order.get(status, 99)
+
+    @staticmethod
+    def _access_priority(access_mode: str) -> int:
+        order = {
+            "REST_API": 0,
+            "CLI": 0,
+            "LOCAL_FILE": 1,
+            "DATASET": 2,
+        }
+        return order.get(access_mode, 3)
 
     @staticmethod
     def _normalize_entities_for_coder(

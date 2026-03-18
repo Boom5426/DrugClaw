@@ -79,6 +79,14 @@ class _AvailabilityRegistryStub(_RegistryStub):
         return _AvailabilitySkillStub(self.availability[skill_name])
 
 
+class _ResourceRegistryStub:
+    def __init__(self, entries):
+        self.entries = {entry.name: entry for entry in entries}
+
+    def get_resource(self, name):
+        return self.entries.get(name)
+
+
 def test_retriever_consumes_query_plan_when_present() -> None:
     state = AgentState(
         original_query="What does imatinib target?",
@@ -233,6 +241,70 @@ def test_retriever_filters_unavailable_skills_from_query_plan() -> None:
     assert coder.last_skill_names == ["BindingDB"]
 
 
+def test_retriever_prioritizes_ready_remote_skills_for_fallback() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets of imatinib?",
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["TTD", "TarKG"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct target databases."],
+        ),
+    )
+
+    class _SkillWithAccess(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RegistryWithAccess(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "TTD": _SkillWithAccess(True, "LOCAL_FILE"),
+                "TarKG": _SkillWithAccess(True, "LOCAL_FILE"),
+                "ChEMBL": _SkillWithAccess(True, "CLI"),
+                "Open Targets Platform": _SkillWithAccess(True, "REST_API"),
+                "DGIdb": _SkillWithAccess(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return ["TTD", "ChEMBL", "TarKG", "Open Targets Platform", "DGIdb"]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RegistryWithAccess(),
+        coder_agent=coder,
+        resource_registry=_ResourceRegistryStub(
+            [
+                type("Entry", (), {"name": "TTD", "status": "ready", "access_mode": "LOCAL_FILE"})(),
+                type("Entry", (), {"name": "TarKG", "status": "ready", "access_mode": "LOCAL_FILE"})(),
+                type("Entry", (), {"name": "ChEMBL", "status": "ready", "access_mode": "CLI"})(),
+                type("Entry", (), {"name": "Open Targets Platform", "status": "ready", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "DGIdb", "status": "ready", "access_mode": "REST_API"})(),
+            ]
+        ),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "ChEMBL" in updated.retrieved_text
+    assert "Open Targets Platform" in updated.retrieved_text
+    assert "DGIdb" in updated.retrieved_text
+    assert "TTD" not in updated.retrieved_text
+    assert "TarKG" not in updated.retrieved_text
+    assert coder.last_skill_names == ["ChEMBL", "Open Targets Platform", "DGIdb"]
+
+
 class _NoOpAgent:
     def __init__(self, *args, **kwargs):
         pass
@@ -335,3 +407,31 @@ def test_graph_mode_skips_graph_when_plan_and_evidence_do_not_require_it(monkeyp
 
     assert result["success"] is True
     assert "OPTIONAL_GRAPH:skipped" in result["execution_trace"]
+
+
+def test_system_init_suppresses_registry_startup_noise(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+
+    def _noisy_build_default_registry(config):
+        print("TTDSkill: file not found — set config['drug_target_tsv']")
+        return _RuntimeRegistryStub()
+
+    def _noisy_build_resource_registry(registry):
+        print("TarKGSkill: file not found — set config['tsv_path']")
+        return object()
+
+    monkeypatch.setattr(main_system_module, "build_default_registry", _noisy_build_default_registry)
+    monkeypatch.setattr(main_system_module, "build_resource_registry", _noisy_build_resource_registry)
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    captured = capsys.readouterr()
+
+    assert "file not found" not in captured.out

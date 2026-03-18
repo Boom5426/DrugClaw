@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from drugclaw.agent_planner import PlannerAgent
 from drugclaw.query_plan import build_fallback_query_plan
+from drugclaw.resource_registry import ResourceEntry, ResourceRegistry
 
 
 class _LLMStub:
@@ -113,3 +114,107 @@ def test_planner_infers_drug_entity_when_model_returns_no_entities() -> None:
     ).plan("What are the known drug targets of imatinib?")
 
     assert plan.entities == {"drug": ["imatinib"]}
+
+
+class _PlannerRegistryStub:
+    def get_skills_for_query(self, query):
+        return ["TTD", "ChEMBL", "TarKG", "Open Targets Platform", "DGIdb"]
+
+
+def test_planner_prompt_prefers_ready_non_local_skills() -> None:
+    planner = PlannerAgent(
+        _LLMStub(),
+        skill_registry=_PlannerRegistryStub(),
+        resource_registry=ResourceRegistry(
+            [
+                ResourceEntry(
+                    id="ttd",
+                    name="TTD",
+                    category="dti",
+                    description="",
+                    entrypoint="",
+                    enabled=True,
+                    requires_metadata=True,
+                    required_metadata_paths=[],
+                    required_dependencies=[],
+                    supports_code_generation=True,
+                    fallback_retrieve_supported=True,
+                    status="missing_metadata",
+                    status_reason="missing local metadata",
+                    access_mode="LOCAL_FILE",
+                ),
+                ResourceEntry(
+                    id="chembl",
+                    name="ChEMBL",
+                    category="dti",
+                    description="",
+                    entrypoint="",
+                    enabled=True,
+                    requires_metadata=False,
+                    required_metadata_paths=[],
+                    required_dependencies=[],
+                    supports_code_generation=True,
+                    fallback_retrieve_supported=True,
+                    status="ready",
+                    status_reason="available",
+                    access_mode="CLI",
+                ),
+                ResourceEntry(
+                    id="tarkg",
+                    name="TarKG",
+                    category="dti",
+                    description="",
+                    entrypoint="",
+                    enabled=True,
+                    requires_metadata=True,
+                    required_metadata_paths=[],
+                    required_dependencies=[],
+                    supports_code_generation=True,
+                    fallback_retrieve_supported=True,
+                    status="missing_metadata",
+                    status_reason="missing local metadata",
+                    access_mode="LOCAL_FILE",
+                ),
+                ResourceEntry(
+                    id="open_targets_platform",
+                    name="Open Targets Platform",
+                    category="dti",
+                    description="",
+                    entrypoint="",
+                    enabled=True,
+                    requires_metadata=False,
+                    required_metadata_paths=[],
+                    required_dependencies=[],
+                    supports_code_generation=True,
+                    fallback_retrieve_supported=True,
+                    status="ready",
+                    status_reason="available",
+                    access_mode="REST_API",
+                ),
+                ResourceEntry(
+                    id="dgidb",
+                    name="DGIdb",
+                    category="dti",
+                    description="",
+                    entrypoint="",
+                    enabled=True,
+                    requires_metadata=False,
+                    required_metadata_paths=[],
+                    required_dependencies=[],
+                    supports_code_generation=True,
+                    fallback_retrieve_supported=True,
+                    status="ready",
+                    status_reason="available",
+                    access_mode="REST_API",
+                ),
+            ]
+        ),
+    )
+
+    prompt = planner.get_planning_prompt("What are the known drug targets of imatinib?")
+
+    assert "- ChEMBL" in prompt
+    assert "- Open Targets Platform" in prompt
+    assert "- DGIdb" in prompt
+    assert "- TTD" not in prompt
+    assert "- TarKG" not in prompt

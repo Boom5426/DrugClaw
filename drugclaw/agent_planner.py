@@ -9,9 +9,10 @@ from .query_plan import QueryPlan, build_fallback_query_plan
 class PlannerAgent:
     """Produce a structured retrieval plan from the raw user query."""
 
-    def __init__(self, llm_client, skill_registry=None):
+    def __init__(self, llm_client, skill_registry=None, resource_registry=None):
         self.llm = llm_client
         self.skill_registry = skill_registry
+        self.resource_registry = resource_registry
 
     def get_system_prompt(self) -> str:
         return """You are the Planner Agent for DrugClaw.
@@ -35,7 +36,9 @@ Return concise JSON only."""
         suggested_skills = []
         if self.skill_registry is not None:
             try:
-                suggested_skills = self.skill_registry.get_skills_for_query(query)[:8]
+                suggested_skills = self._rank_suggested_skills(
+                    self.skill_registry.get_skills_for_query(query)
+                )[:8]
             except Exception:
                 suggested_skills = []
         suggestion_text = (
@@ -67,6 +70,23 @@ Rules:
 - do not invent category labels, capability names, or abstract tool names
 - if no exact skill name is justified, return an empty list
 """
+
+    def _rank_suggested_skills(self, skill_names: List[str]) -> List[str]:
+        if not skill_names:
+            return []
+        if self.resource_registry is not None and hasattr(
+            self.resource_registry, "prioritize_resource_names"
+        ):
+            ready_only = self.resource_registry.prioritize_resource_names(
+                skill_names,
+                ready_only=True,
+            )
+            if ready_only:
+                return ready_only
+            ranked = self.resource_registry.prioritize_resource_names(skill_names)
+            if ranked:
+                return ranked
+        return list(dict.fromkeys(skill_names))
 
     def plan(
         self,

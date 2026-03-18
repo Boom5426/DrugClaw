@@ -26,6 +26,8 @@ Additional query parameters:
 """
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from typing import Dict, Any, List, Optional
 
 from langgraph.graph import StateGraph, END
@@ -78,11 +80,14 @@ class DrugClawSystem:
 
         # Runtime skill registry; the resource registry derives authoritative
         # counts and status from this runtime view.
-        self.skill_registry = (
-            skill_registry if skill_registry is not None
-            else build_default_registry(self.config)
-        )
-        self.resource_registry = build_resource_registry(self.skill_registry)
+        if skill_registry is not None:
+            self.skill_registry = skill_registry
+            self.resource_registry = build_resource_registry(self.skill_registry)
+        else:
+            sink = StringIO()
+            with redirect_stdout(sink), redirect_stderr(sink):
+                self.skill_registry = build_default_registry(self.config)
+                self.resource_registry = build_resource_registry(self.skill_registry)
         # Backward-compat alias
         self.kg_manager = self.skill_registry
 
@@ -90,10 +95,17 @@ class DrugClawSystem:
         _web_skill = self.skill_registry.get_skill("WebSearch")
 
         # Agents
-        self.planner = PlannerAgent(self.llm_client, self.skill_registry)
+        self.planner = PlannerAgent(
+            self.llm_client,
+            self.skill_registry,
+            resource_registry=self.resource_registry,
+        )
         self.coder = CoderAgent(self.llm_client, self.skill_registry)
         self.retriever = RetrieverAgent(
-            self.llm_client, self.skill_registry, coder_agent=self.coder,
+            self.llm_client,
+            self.skill_registry,
+            coder_agent=self.coder,
+            resource_registry=self.resource_registry,
         )
         self.graph_builder = GraphBuilderAgent(self.llm_client)
         self.reranker = RerankerAgent(self.llm_client, config)
