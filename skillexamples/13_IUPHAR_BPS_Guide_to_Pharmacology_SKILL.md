@@ -68,3 +68,18 @@ examples (single ligand, single target, batch, direct ID lookup).
 **Target**: `targetId`, `name`, `abbreviation`, `type`, `familyIds`, `geneIds`
 
 **Interaction**: `ligandId`, `targetId`, `action`, `affinityRange`, `affinityType`, `endogenous`, `species`
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/13_IUPHAR_BPS_Guide_to_Pharmacology.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/13_IUPHAR_BPS_Guide_to_Pharmacology.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

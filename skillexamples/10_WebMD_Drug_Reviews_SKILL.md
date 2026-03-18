@@ -40,3 +40,18 @@ See `if __name__ == "__main__"` block in `10_WebMD_Drug_Reviews.py` for runnable
 - **Ratings**: 1-5 star scale for Effectiveness, EaseofUse, Satisfaction
 - **Path**: `DATA_PATH` variable in `10_WebMD_Drug_Reviews.py`
   (`/blue/qsong1/wang.qing/AgentLLM/Survey100/resources_metadata/drug_review/WebMDDrugReviews/webmd.csv`)
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/10_WebMD_Drug_Reviews.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/10_WebMD_Drug_Reviews.py metformin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

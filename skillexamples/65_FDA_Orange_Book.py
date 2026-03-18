@@ -156,6 +156,16 @@ def preview_products_file():
 
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search_approved_drugs(_e, limit=5)
+            print(_json.dumps(_result, indent=2, ensure_ascii=False, default=str))
+        sys.exit(0)
+
+    # --- original demo below ---
     print("=== FDA Orange Book: Download data ===")
     success = download_orange_book()
     if success:

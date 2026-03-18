@@ -163,6 +163,17 @@ def to_json(hits: list[dict]) -> str:
 # ── CLI demo ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _data = load()
+        for _e in _cli_entities:
+            _hits = search(_data, _e)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     data = load(DATA_PATH)
     print(f"Loaded {len(data)} records from {DATA_PATH}\n")
 

@@ -59,3 +59,18 @@ search, and JSON output.
 - **ClinPGx** (Stanford / NIH) — https://www.clinpgx.org/ — REST JSON, no key, ≤2 req/s, CC BY-SA 4.0
 - **CPIC API** — https://api.cpicpgx.org/ — PostgREST, no key — gene-drug guideline pairs
 - **Note**: PharmGKB was subsumed by ClinPGx (July 2025). CPIC API remains at `api.cpicpgx.org`.
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/49_PharmGKB_ClinPGx.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/49_PharmGKB_ClinPGx.py warfarin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

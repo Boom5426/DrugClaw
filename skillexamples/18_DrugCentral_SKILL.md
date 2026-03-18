@@ -79,3 +79,18 @@ See `if __name__ == "__main__"` block in `18_DrugCentral.py` for runnable exampl
 - **DrugCentral**: <https://drugcentral.org/>
 - **Paper**: Avram et al., *Nucleic Acids Research* 2023, 51(D1):D1276–D1287. DOI: [10.1093/nar/gkac1085](https://doi.org/10.1093/nar/gkac1085)
 - **License**: CC BY-NC 4.0 (non-commercial)
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/18_DrugCentral.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/18_DrugCentral.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

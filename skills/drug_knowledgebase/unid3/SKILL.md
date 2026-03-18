@@ -108,3 +108,18 @@ neighbors = get_neighbors("ASPIRIN")
 # Step 3: Filter neighbors by type
 diseases = [n for n in neighbors if n["neighbor"]["entity_type"] == "DISEASE"]
 ```
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/01_UniD3.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/01_UniD3.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

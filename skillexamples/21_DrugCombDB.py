@@ -272,6 +272,16 @@ def to_json(results: list[dict]) -> list[dict]:
 # ── runnable examples ─────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _hits = search(_e, limit=20)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     print("=" * 70)
     print("1) Search by drug name — 5-FU")
     print("=" * 70)

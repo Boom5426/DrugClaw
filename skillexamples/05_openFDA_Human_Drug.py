@@ -105,6 +105,15 @@ def summarize(results: dict) -> str:
 # ── runnable examples ───────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _r = search_drug(_cli_entities, limit=3)
+        print(summarize(_r))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- Example 1: single drug lookup ---
     r = search_drug("ASPIRIN", limit=1)
     print(summarize(r))

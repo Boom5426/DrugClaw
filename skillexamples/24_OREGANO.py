@@ -315,6 +315,16 @@ def get_stats():
 # ── main ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e)
+            print(summarize(_result))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- Single search: free-text drug name ---
     r = search("metformin")
     print(summarize(r))

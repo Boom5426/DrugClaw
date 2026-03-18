@@ -143,6 +143,18 @@ def to_json(hits: list) -> str:
 # ── main examples ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _triples = load_pharmkg()
+        _idx = _build_index(_triples)
+        for _e in _cli_entities:
+            _hits = search(_triples, _e, index=_idx)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     data = load_pharmkg()
     idx = _build_index(data)
     print(f"Loaded {len(data)} triples, index has {len(idx)} unique entities.\n")

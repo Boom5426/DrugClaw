@@ -153,6 +153,16 @@ def query(entities: Union[str, list[str]], fields: str = "all") -> list[dict]:
 # Usage examples (LLM-friendly)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _results = query(_cli_entities)
+        for _r in _results:
+            print(_json.dumps(_r, indent=2, ensure_ascii=False, default=str))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- Example 1: Query a single drug by name ---
     print("=== Single drug query: aspirin ===")
     out = query("aspirin")

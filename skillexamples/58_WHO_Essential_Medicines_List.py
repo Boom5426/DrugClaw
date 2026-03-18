@@ -256,6 +256,17 @@ def to_json(hits):
 # ── examples ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _eml = load_eml()
+        for _e in _cli_entities:
+            _hits = search(_eml, _e)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     data = load_eml()
     print(f"Loaded {len(data)} WHO EML records.\n")
 

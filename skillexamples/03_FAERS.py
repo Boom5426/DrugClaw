@@ -73,6 +73,16 @@ def summarize_reactions(reactions: list[dict], drug: str) -> str:
 # ── usage examples ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _reactions = count_reactions(_e, top_n=10)
+            print(summarize_reactions(_reactions, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- single entity ---
     drug = "ASPIRIN"
     rxns = count_reactions(drug, top_n=5)

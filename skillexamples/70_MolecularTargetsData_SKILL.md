@@ -108,3 +108,18 @@ print(json.dumps(mt.to_json(hits[:5]), indent=2))
 # File already at:
 # /blue/qsong1/wang.qing/AgentLLM/Survey100/resources_metadata/dti/Molecular Target Data/WEB_DATA_PROTEIN.TXT
 ```
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/70_MolecularTargetsData.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/70_MolecularTargetsData.py imatinib
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

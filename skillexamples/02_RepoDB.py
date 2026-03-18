@@ -78,6 +78,17 @@ def to_json(hits: pd.DataFrame) -> list[dict]:
 # Usage Examples (run: python repodb_query.py)
 # ============================================================
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _df = load_repodb()
+        for _e in _cli_entities:
+            _hits = search(_df, _e)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     df = load_repodb()
     print(f"Loaded {len(df)} records, columns: {list(df.columns)}\n")
 

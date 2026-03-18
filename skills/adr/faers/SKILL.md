@@ -31,3 +31,18 @@ See `if __name__ == "__main__"` block in `faers_query.py` for runnable examples 
 - Input accepts a single string or a list of strings for batch queries.
 - `summarize_reactions` produces compact `DRUG: reaction(count), ...` format suitable for LLM context.
 - Source: openFDA Drug Adverse Events endpoint (`https://api.fda.gov/drug/event.json`).
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/03_FAERS.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/03_FAERS.py aspirin ibuprofen
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

@@ -47,3 +47,18 @@ covering: single entity search, batch search, summarize, and JSON output.
 - **Scale**: ~188 k entities, 39 relation types, >1 M triples
 - **Path**: `DATA_PATH` variable in `55_PharmKG.py`
 - **Paper**: Zheng et al., *Briefings in Bioinformatics* 22(4), 2021. DOI: 10.1093/bib/bbaa344
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/55_PharmKG.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/55_PharmKG.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

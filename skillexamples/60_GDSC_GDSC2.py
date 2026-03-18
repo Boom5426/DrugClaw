@@ -169,6 +169,18 @@ def query_gdsc(
 
 # ── CLI ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _result = query_gdsc(entities=_cli_entities)
+        if isinstance(_result, str):
+            print(_result)
+        else:
+            print(_json.dumps(_result, indent=2, ensure_ascii=False, default=str))
+        sys.exit(0)
+
+    # --- original demo below ---
     # Example: query well-known cancer drugs and a cell line
     entities = ["Erlotinib", "Nutlin", "A549"]
 

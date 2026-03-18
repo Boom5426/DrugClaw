@@ -143,6 +143,18 @@ def to_json(paths):
 
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _db = load()
+        _idx = build_index(_db)
+        for _e in _cli_entities:
+            _paths = search(_db, _e, index=_idx)
+            print(summarize(_paths, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     db = load()
     idx = build_index(db)
     print(f"Loaded {len(db)} paths\n")

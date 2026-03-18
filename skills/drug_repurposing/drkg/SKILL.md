@@ -96,3 +96,18 @@ Located at `DATA_DIR` in `25_DRKG.py`:
 Ioannidis et al. "DRKG - Drug Repurposing Knowledge Graph for Covid-19", 2020.
 https://github.com/gnn4dr/DRKG
 ```
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/25_DRKG.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/25_DRKG.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

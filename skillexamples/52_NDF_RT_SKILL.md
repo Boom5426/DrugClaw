@@ -65,3 +65,18 @@ concept listing.
 - **Auth**: none required
 - **Rate limits**: not documented; use reasonable request spacing
 - **Maintainer**: U.S. Department of Veterans Affairs / NCI Enterprise Vocabulary Services
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/52_NDF_RT.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/52_NDF_RT.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

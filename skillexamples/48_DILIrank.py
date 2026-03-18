@@ -185,6 +185,17 @@ def to_json(result: dict) -> str:
 # ── Main (runnable examples) ───────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _data = load_all()
+        for _e in _cli_entities:
+            _result = search(_data, _e)
+            print(summarize(_result, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     data = load_all()
     print(f"DILIrank: {len(data['dilirank'])} drugs | DILIst: {len(data['dilist'])} drugs\n")
 

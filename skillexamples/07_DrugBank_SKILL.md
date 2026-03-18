@@ -54,3 +54,18 @@ print(to_json(hits[:1]))
 ```
 
 See `if __name__ == "__main__"` block in `07_DrugBank.py` for runnable examples.
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/07_DrugBank.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/07_DrugBank.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

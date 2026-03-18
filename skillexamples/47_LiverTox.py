@@ -61,6 +61,20 @@ def lookup_entities(entities):
 
 if __name__ == "__main__":
 
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _results = lookup_entities(_cli_entities)
+        for _e, _info in _results.items():
+            print(f"=== {_e} ===")
+            if isinstance(_info, dict):
+                print(_json.dumps(_info, indent=2, ensure_ascii=False, default=str))
+            else:
+                print(_info)
+        sys.exit(0)
+
+    # --- original demo below ---
     # Example entities (LLM can modify this list)
     entities = [
         "acetaminophen",

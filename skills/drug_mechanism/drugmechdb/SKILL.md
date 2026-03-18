@@ -75,3 +75,18 @@ links:  [{ source, target, key }, ...]
 ```
 
 `key` examples: `decreases activity of`, `causes`, `positively regulates`, `treats`, `increases expression of`, etc. (66 relation types total).
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/04_DRUGMECHDB.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/04_DRUGMECHDB.py metformin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

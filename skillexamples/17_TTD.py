@@ -257,6 +257,19 @@ def query_json(
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _out = query(_e)
+            if isinstance(_out, str):
+                print(_out)
+            else:
+                print(_json.dumps(_out, indent=2, ensure_ascii=False, default=str))
+        sys.exit(0)
+
+    # --- original demo below ---
     import sys
     entities = sys.argv[1:] if len(sys.argv) > 1 else ["EGFR", "Imatinib", "Lung cancer"]
     print(f"Querying TTD for: {entities}\n")

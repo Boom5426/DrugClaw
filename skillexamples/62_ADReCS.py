@@ -320,6 +320,16 @@ def to_json(hits: pd.DataFrame) -> list[dict]:
 # ── CLI demo ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e)
+            print(summarize(_result, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     print("Loading ADReCS v3.3 data ...")
     da = load_drug_adr()
     di = load_drug_info()

@@ -121,6 +121,17 @@ def to_json(hits: list[dict]) -> list[dict]:
 # ── CLI demo ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _rows = load_reviews()
+        for _e in _cli_entities:
+            _hits = search(_rows, _e)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     rows = load_reviews()
     print(f"Loaded {len(rows)} reviews.  Columns: {list(rows[0].keys())}\n")
 

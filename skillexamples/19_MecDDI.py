@@ -90,6 +90,17 @@ def to_json(hits: List[Dict]) -> str:
 
 # --------------- CLI / Usage Example ---------------
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _records = load_mecddi()
+        for _e in _cli_entities:
+            _hits = search(_records, _e)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     print("Loading MecDDI data ...")
     data = load_mecddi()
     print(f"Loaded {len(data)} records from {DATA_DIR}\n")

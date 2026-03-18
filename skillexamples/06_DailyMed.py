@@ -113,6 +113,14 @@ def query(entities: Union[str, list[str]], limit: int = 3) -> str:
 # ── runnable examples ─────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        print(query(_cli_entities, limit=3))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- single entity ---
     print(query("metformin"))
 

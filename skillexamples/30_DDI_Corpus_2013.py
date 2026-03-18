@@ -205,6 +205,14 @@ def corpus_stats(corpus_root: str | None = None) -> str:
 # ── Demo ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        print(query_entities(_cli_entities))
+        sys.exit(0)
+
+    # --- original demo below ---
     # 1. Corpus-level statistics
     print("=== Corpus Statistics ===")
     print(corpus_stats())

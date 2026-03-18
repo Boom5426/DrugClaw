@@ -308,6 +308,16 @@ def to_json(result: dict) -> str:
 # ── usage example ───────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e, limit=20)
+            print(summarize(_result))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- single entity ---
     print("=== Single query: aspirin ===")
     res = search("aspirin", limit=5)

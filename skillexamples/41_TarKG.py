@@ -474,6 +474,17 @@ def _print_subgraph(sg, show_edges=10):
 
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        build_index()
+        for _e in _cli_entities:
+            _result = query_entity(_e)
+            print(_json.dumps(_result, indent=2, ensure_ascii=False, default=str))
+        sys.exit(0)
+
+    # --- original demo below ---
     # 0. Build index (auto-skip if .tarkg_index.db already exists)
     print("=" * 60)
     db_path = os.path.join(DATA_DIR, ".tarkg_index.db")

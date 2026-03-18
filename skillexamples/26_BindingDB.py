@@ -213,6 +213,16 @@ def to_json(result: dict) -> list[dict]:
 
 if __name__ == "__main__":
 
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e)
+            print(summarize(_result))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- Single entity: UniProt ---
     print("=" * 60)
     print("1) Single UniProt query: P35355 (COX-2), cutoff 100 nM")

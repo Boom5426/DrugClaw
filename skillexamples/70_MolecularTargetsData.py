@@ -221,6 +221,15 @@ def query(data: list[dict], entities: Union[str, list], top_n: int = 0) -> str:
 # ── Main: runnable usage examples ───────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _data = load_data()
+        print(query(_data, _cli_entities))
+        sys.exit(0)
+
+    # --- original demo below ---
     print("Loading NCI DTP molecular target data ...")
     data = load_data()
     print(f"Loaded {len(data)} records.\n")

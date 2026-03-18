@@ -132,6 +132,17 @@ def search_by_keyword(keyword: str,
 
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            result = query_entities(_e)
+            for item in result:
+                print(_json.dumps(item, indent=2, ensure_ascii=False, default=str))
+        sys.exit(0)
+
+    # --- original demo below ---
     print("Graphs:", list_graphs())
     hits = query_entities("RESPIRATORY DISEASES")
     print(f"\nquery_entities('RESPIRATORY DISEASES') → {len(hits)} hit(s)")

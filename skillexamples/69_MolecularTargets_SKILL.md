@@ -70,3 +70,18 @@ examples covering:
 - `get_associations()` returns scored target↔disease links ranked by overall
   evidence score (0–1). Use `size` to control how many rows are returned.
 - Returns `None` / `[]` on HTTP errors — callers handle no-results gracefully.
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/69_MolecularTargets.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/69_MolecularTargets.py BRAF
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

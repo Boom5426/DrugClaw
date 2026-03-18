@@ -59,3 +59,18 @@ print(atc.to_json(atc.search("sparsentan")))
 - **Path**: `DATA_DIR` / `XLSX_PATH` in `27_ATC_DDD.py`
 - **Remote API**: RxNav RxClass (`rxnav.nlm.nih.gov/REST/rxclass/`)
 - **Citation**: WHOCC — WHO Collaborating Centre for Drug Statistics Methodology, ATC/DDD Index 2026. https://atcddd.fhi.no/atc_ddd_index/
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/27_ATC_DDD.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/27_ATC_DDD.py aspirin N02BA01
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

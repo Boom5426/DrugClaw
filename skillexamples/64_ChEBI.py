@@ -235,6 +235,16 @@ def to_json(results: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
 
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _results = search(_e)
+            print(summarize(_results, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- 1. Single entity by ChEBI ID ---
     print("=== 1. Get entity by ChEBI ID (ATP, CHEBI:15422) ===")
     try:

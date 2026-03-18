@@ -90,3 +90,18 @@ Agent: calls query_dili("troglitazone")
        → source: DILIrank_2.0.xlsx, DILI Concern: Most-DILI-Concern
        → "Yes — troglitazone is classified as Most-DILI-Concern in the FDA DILIrank dataset."
 ```
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/61_DILI.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/61_DILI.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

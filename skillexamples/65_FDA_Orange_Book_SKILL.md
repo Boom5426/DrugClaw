@@ -48,3 +48,18 @@ Keep network timeouts short and preserve the script's native access method
 
 - <https://www.accessdata.fda.gov/scripts/cder/ob/>
 - <https://api.fda.gov/drug/ndc.json>
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/65_FDA_Orange_Book.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/65_FDA_Orange_Book.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

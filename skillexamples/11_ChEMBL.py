@@ -165,6 +165,18 @@ def summarize_target(tgt: dict) -> str:
 
 if __name__ == "__main__":
 
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _r = query_molecules(_cli_entities, limit=5)
+        for _entity, _mols in _r.items():
+            print(f"[{_entity}]")
+            for _mol in _mols:
+                print(f"  {summarize_molecule(_mol)}")
+        sys.exit(0)
+
+    # --- original demo below ---
     # 1. Single molecule by ChEMBL ID
     print("=== Single molecule: CHEMBL25 (Aspirin) ===")
     res = query_molecules("CHEMBL25")

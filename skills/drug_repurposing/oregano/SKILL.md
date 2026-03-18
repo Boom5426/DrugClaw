@@ -50,3 +50,18 @@ See `if __name__ == "__main__"` block in `21_OREGANO.py` for runnable examples c
 ## Citation
 
 Boudin, M., Diallo, G., Drancé, M. & Mougin, F. The OREGANO knowledge graph for computational drug repurposing. *Sci Data* 10, 871 (2023). https://doi.org/10.1038/s41597-023-02757-0
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/24_OREGANO.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/24_OREGANO.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

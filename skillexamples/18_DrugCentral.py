@@ -242,6 +242,16 @@ def to_json(result: dict) -> str:
 # ── Main ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e)
+            print(summarize(_result, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     print("=" * 60)
     print("DrugCentral Query Skill – Demo")
     print(f"DATA_DIR = {DATA_DIR}")

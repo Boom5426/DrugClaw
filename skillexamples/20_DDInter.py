@@ -202,6 +202,16 @@ def get_interactions_between(drug_a: str, drug_b: str,
 # Runnable examples
 # ===================================================================
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _hits = search(_e)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- Single drug search (dataset uses "Acetylsalicylic acid" for aspirin) ---
     print("=== Search: Acetylsalicylic acid ===")
     hits = search("Acetylsalicylic acid")

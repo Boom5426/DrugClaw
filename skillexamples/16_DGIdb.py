@@ -313,6 +313,16 @@ def to_json(results: list) -> list:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e)
+            print(summarize(_result, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- Single gene query ---
     print("=" * 60)
     print("1) Gene query: EGFR")

@@ -180,6 +180,17 @@ def to_json(hits: pd.DataFrame) -> list[dict]:
 
 # ── main demo ────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _df = load_gdkd()
+        for _e in _cli_entities:
+            _hits = search(_df, _e)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     import json
 
     df = load_gdkd()

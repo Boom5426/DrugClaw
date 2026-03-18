@@ -277,6 +277,16 @@ def to_json(result: dict) -> dict:
 # ===== main demo ============================================================
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e, limit=50)
+            print(summarize(_result))
+        sys.exit(0)
+
+    # --- original demo below ---
     print("Loading DRKG triplets (this may take ~30 s on first run) ...")
     hi, ti = _load_triplets()
     print(f"  Loaded {sum(len(v) for v in hi.values()):,} triplets,  "

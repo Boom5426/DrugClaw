@@ -48,3 +48,18 @@ See `if __name__ == "__main__"` block in `59_WHO_EML.py` for runnable examples.
 - **Cache**: `who_eml_23.json` (auto-built on first run from PDF)
 - **License**: CC BY-NC-SA 3.0 IGO
 - **Dependency**: `pip install pypdf`
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/58_WHO_Essential_Medicines_List.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/58_WHO_Essential_Medicines_List.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

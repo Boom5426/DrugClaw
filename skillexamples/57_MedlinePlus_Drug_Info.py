@@ -276,6 +276,16 @@ def to_json(result: dict) -> list[dict]:
 # ── main demo ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _results = search(_e)
+            print(summarize(_results, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- Single entity: drug name ---
     print("=== search('metformin') ===")
     res = search("metformin")

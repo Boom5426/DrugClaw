@@ -39,3 +39,17 @@ Example:
 - Entity matching is case-insensitive.
 - Up to 5 relevant sections are returned for each entity.
 - Data source: LiverTox (NCBI Bookshelf NBK547852).
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/47_LiverTox.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/47_LiverTox.py aspirin amoxicillin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

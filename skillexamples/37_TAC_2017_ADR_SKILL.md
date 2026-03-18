@@ -79,3 +79,18 @@ results = tac.search_batch(["ENBREL", "nausea", "10002198"])
 - **MedDRA version**: 18.1
 - **Path**: `DATA_DIR` variable in `37_TAC_2017_ADR.py`
 - **Reference**: https://bionlp.nlm.nih.gov/tac2017adversereactions/
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/37_TAC_2017_ADR.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/37_TAC_2017_ADR.py aspirin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.

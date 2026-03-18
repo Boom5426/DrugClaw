@@ -243,6 +243,17 @@ def to_json(result: dict) -> str:
 
 # ── main: runnable examples ─────────────────────────────────────────────
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _tables = load_all()
+        for _e in _cli_entities:
+            _result = search(_tables, _e)
+            print(summarize(_result, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     tables = load_all()
     print(f"Loaded: Drug={len(tables['drug'])} DTI={len(tables['dti'])} "
           f"Lit={len(tables['lit'])} Target={len(tables['target'])}")

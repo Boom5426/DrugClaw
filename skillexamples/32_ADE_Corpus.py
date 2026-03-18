@@ -169,6 +169,15 @@ class ADECorpus:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _corpus = ADECorpus()
+        print(_corpus.query(_cli_entities))
+        sys.exit(0)
+
+    # --- original demo below ---
     corpus = ADECorpus()
     print("=== Corpus Stats ===")
     print(corpus.stats())

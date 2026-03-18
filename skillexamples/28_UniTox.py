@@ -214,6 +214,16 @@ def list_drugs(path: str = DATA_PATH) -> List[str]:
 
 # ── CLI demo ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _hits = search(_e)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     import json
 
     # 0. Diagnostic: verify loading

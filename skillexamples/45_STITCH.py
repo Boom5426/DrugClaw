@@ -241,6 +241,16 @@ def to_json(result: dict | list) -> str:
 # ── CLI demo ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e)
+            print(summarize(_result, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- single query: free-text name ---
     print("=== search('aspirin') ===")
     r = search("aspirin")

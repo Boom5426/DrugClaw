@@ -226,6 +226,16 @@ def to_json(result: dict) -> str:
 
 # ── CLI demo ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e)
+            print(summarize(_result))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- Single entity: drug name ---
     r = search("aspirin")
     print(summarize(r))

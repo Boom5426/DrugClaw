@@ -421,6 +421,16 @@ def to_json(data: Optional[dict]) -> list[dict]:
 # CLI examples
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        for _e in _cli_entities:
+            _result = search(_e)
+            print(summarize(_result, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     # --- 1. Free-text search ---
     print("=" * 60)
     print("1) Free-text search: 'neuroblastoma'")

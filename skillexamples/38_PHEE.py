@@ -242,6 +242,17 @@ def to_json(hits: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _data = load_phee()
+        for _e in _cli_entities:
+            _hits = search(_data, _e)
+            print(summarize(_hits, _e))
+        sys.exit(0)
+
+    # --- original demo below ---
     data = load_phee()
 
     # 1. Single drug search

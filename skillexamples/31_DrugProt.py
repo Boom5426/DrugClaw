@@ -204,6 +204,16 @@ def format_results(results: list[dict], max_matches: int = 5) -> str:
 
 # ---------- CLI ----------
 if __name__ == "__main__":
+    import sys, json as _json
+    if len(sys.argv) > 1:
+
+        _cli_entities = sys.argv[1:]
+        _ds = load_dataset()
+        _results = query_entities(_cli_entities, _ds)
+        print(format_results(_results))
+        sys.exit(0)
+
+    # --- original demo below ---
     import sys
 
     print("Loading DrugProt dataset ...")

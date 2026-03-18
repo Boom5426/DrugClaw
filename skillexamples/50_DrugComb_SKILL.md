@@ -43,3 +43,18 @@ See `if __name__ == "__main__"` block in `50_DrugComb.py` for runnable examples 
 ## Citation
 
 Zagidullin B, Aldahdooh J, Zheng S, et al. DrugComb: an integrative cancer drug combination data portal. *Nucleic Acids Res.* 2019;47(W1):W43–W51. doi:10.1093/nar/gkz337
+
+## CLI Usage (Fallback)
+
+When vibe coding fails, run the script directly from the command line:
+
+```bash
+python skillexamples/50_DrugComb.py <entity1> [entity2] ...
+```
+
+**Example:**
+```bash
+python skillexamples/50_DrugComb.py doxorubicin
+```
+
+The script prints summarised, LLM-readable results to stdout. Without arguments, it runs built-in demo examples.
