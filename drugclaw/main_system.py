@@ -120,7 +120,8 @@ class DrugClawSystem:
                        ──(mode=web_only)──────► web_search_direct
 
           plan ──► retrieve ──► normalize_evidence
-          normalize_evidence ──(graph)──► graph_build ──► rerank ──► assess_claims ──► respond ──► finalize
+          normalize_evidence ──(graph)──► optional_graph ──► graph_build ──► rerank ──► assess_claims ──► respond ──► finalize
+                                           └──────────────► assess_claims
                              ──(simple)──► assess_claims ──► simple_respond ──► finalize
 
           web_search_direct ──► finalize
@@ -132,6 +133,7 @@ class DrugClawSystem:
         wf.add_node("plan",               self._plan_node)
         wf.add_node("retrieve",           self._retrieve_node)
         wf.add_node("normalize_evidence", self._normalize_evidence_node)
+        wf.add_node("optional_graph",     self._optional_graph_node)
         wf.add_node("graph_build",        self._graph_build_node)
         wf.add_node("rerank",             self._rerank_node)
         wf.add_node("assess_claims",      self._assess_claims_node)
@@ -157,6 +159,11 @@ class DrugClawSystem:
         wf.add_conditional_edges(
             "normalize_evidence",
             self._after_normalize_evidence,
+            {"optional_graph": "optional_graph", "assess_claims": "assess_claims"},
+        )
+        wf.add_conditional_edges(
+            "optional_graph",
+            self._after_optional_graph,
             {"graph_build": "graph_build", "assess_claims": "assess_claims"},
         )
 
@@ -190,6 +197,11 @@ class DrugClawSystem:
     def _after_normalize_evidence(self, state: AgentState) -> str:
         mode = getattr(state, "thinking_mode", ThinkingMode.GRAPH)
         if str(mode) == ThinkingMode.GRAPH:
+            return "optional_graph"
+        return "assess_claims"
+
+    def _after_optional_graph(self, state: AgentState) -> str:
+        if getattr(state, "graph_decision_reason", "").startswith("run:"):
             return "graph_build"
         return "assess_claims"
 
@@ -237,6 +249,15 @@ class DrugClawSystem:
 
     def _rerank_node(self, state: AgentState) -> AgentState:
         return self.reranker.execute(state)
+
+    def _optional_graph_node(self, state: AgentState) -> AgentState:
+        should_run, reason = self._should_run_graph(state)
+        state.graph_decision_reason = ("run:" if should_run else "skip:") + reason
+        self._record_stage(
+            state,
+            "OPTIONAL_GRAPH:run" if should_run else "OPTIONAL_GRAPH:skipped",
+        )
+        return state
 
     def _assess_claims_node(self, state: AgentState) -> AgentState:
         self._record_stage(state, "ASSESS_CLAIMS")
@@ -291,6 +312,28 @@ class DrugClawSystem:
     def _record_stage(state: AgentState, stage: str) -> None:
         state.execution_stage = stage
         state.execution_trace.append(stage)
+
+    @staticmethod
+    def _should_run_graph(state: AgentState) -> tuple[bool, str]:
+        plan = getattr(state, "query_plan", None)
+        if plan is None:
+            return False, "query plan unavailable"
+        if not getattr(plan, "requires_graph_reasoning", False):
+            return False, "planner did not recommend graph reasoning"
+
+        entities = getattr(plan, "entities", {}) or {}
+        entity_count = sum(len(values) for values in entities.values())
+        if entity_count >= 2:
+            return True, "multiple entities suggest relational composition"
+
+        question_type = str(getattr(plan, "question_type", ""))
+        if question_type in {"ddi_mechanism", "mechanism", "evidence_synthesis", "adr_causal"}:
+            return True, f"question type `{question_type}` benefits from graph reasoning"
+
+        if len(getattr(state, "evidence_items", []) or []) >= 2:
+            return True, "multiple evidence items available for composition"
+
+        return False, "evidence shape does not justify graph reasoning"
 
     @staticmethod
     def _format_omics_constraints(constraints: Optional[OmicsConstraints]) -> str:

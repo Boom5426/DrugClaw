@@ -132,6 +132,25 @@ class _RuntimeRegistryStub:
         return None
 
 
+class _PlannerNodeStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def plan(self, query, omics_constraints=None):
+        return QueryPlan(
+            question_type="labeling",
+            entities={"drug": ["metformin"]},
+            subquestions=["What prescribing information is available for metformin?"],
+            preferred_skills=["DailyMed"],
+            preferred_evidence_types=["label_text"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="high",
+            notes=["Direct label lookup; graph reasoning is unnecessary."],
+        )
+
+
 def test_simple_mode_uses_explicit_stage_trace(monkeypatch) -> None:
     monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
     monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
@@ -156,3 +175,27 @@ def test_simple_mode_uses_explicit_stage_trace(monkeypatch) -> None:
         "ASSESS_CLAIMS",
         "ANSWER",
     ]
+
+
+def test_graph_mode_skips_graph_when_plan_and_evidence_do_not_require_it(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "PlannerAgent", _PlannerNodeStub)
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query(
+        "What prescribing and safety information is available for metformin?",
+        thinking_mode="graph",
+    )
+
+    assert result["success"] is True
+    assert "OPTIONAL_GRAPH:skipped" in result["execution_trace"]
