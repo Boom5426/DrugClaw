@@ -14,6 +14,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional
 
 from ...base import RAGSkill, RetrievalResult, AccessMode
+from drugclaw.evidence import EvidenceItem, score_evidence_item
 
 logger = logging.getLogger(__name__)
 
@@ -109,3 +110,41 @@ class BindingDBSkill(RAGSkill):
                 },
             ))
         return results
+
+    def build_evidence_items(
+        self,
+        records: List[Dict[str, Any]],
+        query: str = "",
+    ) -> List[EvidenceItem]:
+        items: List[EvidenceItem] = []
+        for index, record in enumerate(records, start=1):
+            metadata = record.get("metadata", {})
+            source_entity = record.get("source_entity", "")
+            target_entity = record.get("target_entity", "")
+            affinity_type = metadata.get("affinity_type", "binding")
+            affinity_value = metadata.get("affinity_value", "")
+            claim = f"{source_entity} targets {target_entity}".strip()
+            locator = metadata.get("pmid") or metadata.get("uniprot_id") or "BindingDB"
+            item = EvidenceItem(
+                evidence_id=f"bindingdb:{index}",
+                source_skill=self.name,
+                source_type="database",
+                source_title="BindingDB binding affinity record",
+                source_locator=str(locator),
+                snippet=record.get("evidence_text", ""),
+                structured_payload={
+                    "affinity_type": affinity_type,
+                    "affinity_value": affinity_value,
+                    "uniprot_id": metadata.get("uniprot_id", ""),
+                },
+                claim=claim,
+                evidence_kind="database_record",
+                support_direction="supports",
+                confidence=0.0,
+                retrieval_score=0.9,
+                timestamp="2026-03-18T00:00:00Z",
+                metadata={"skill_category": self.subcategory},
+            )
+            item.confidence = score_evidence_item(item)
+            items.append(item)
+        return items

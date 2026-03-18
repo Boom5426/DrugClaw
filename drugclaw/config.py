@@ -49,8 +49,8 @@ class Config:
 
 
         # ------------------------------------------------------------------
-        # Per-skill configurations — 68 LLM-friendly resources
-        # Organized by subcategory (from 68DrugResources.xlsx).
+        # Per-skill runtime configuration, organized by subcategory.
+        # The runtime resource registry is authoritative for active counts/status.
         #
         # Each key is the skill's .name attribute.
         # Leave {} to use defaults. Set paths for LOCAL_FILE skills.
@@ -253,45 +253,13 @@ class Config:
             "PHEE": {},
         }
 
-        # ------------------------------------------------------------------
-        # Default active skills — only implemented skills (25 with example.py + SKILL.md)
-        # ------------------------------------------------------------------
+        # Legacy compatibility only. The runtime resource registry is still the
+        # only authoritative source of active resources and counts.
+        from .skills.skill_tree import SkillTree
         self.DEFAULT_ACTIVE_SKILLS = [
-            # DTI (6 implemented)
-            "ChEMBL",           # CLI-first (chembl_webresource_client)
-            "BindingDB",        # REST API
-            "DGIdb",            # REST API / GraphQL
-            "Open Targets Platform",  # REST API / GraphQL
-            "TTD",              # LOCAL_FILE
-            "STITCH",           # REST API
-            # ADR (2 implemented)
-            "FAERS",            # DATASET
-            "SIDER",            # LOCAL_FILE
-            # Drug Knowledgebase (5 implemented)
-            "UniD3",            # LOCAL_FILE (GraphML)
-            "DrugBank",         # REST API (API key optional)
-            "IUPHAR/BPS Guide to Pharmacology",  # REST API
-            "DrugCentral",      # REST API
-            "CPIC",             # REST API
-            # Drug Mechanism (1 implemented)
-            "DRUGMECHDB",       # REST API (auto-download)
-            # Drug Labeling (3 implemented)
-            "openFDA Human Drug",    # REST API
-            "DailyMed",         # REST API
-            "MedlinePlus Drug Info", # REST API
-            # Drug Ontology (2 implemented)
-            "RxNorm",           # REST API
-            "ChEBI",            # CLI-first (libchebipy)
-            # Drug Repurposing (1 implemented)
-            "RepoDB",           # DATASET
-            # Pharmacogenomics (1 implemented)
-            "PharmGKB",         # REST API
-            # DDI (3 implemented)
-            "MecDDI",           # LOCAL_FILE
-            "DDInter",          # REST API
-            "KEGG Drug",        # CLI-first (bioservices)
-            # Drug Review (1 implemented)
-            "WebMD Drug Reviews",   # DATASET
+            node.name
+            for node in SkillTree().all_skill_nodes()
+            if node.implemented
         ]
 
     def get_llm_config(self) -> Dict[str, Any]:

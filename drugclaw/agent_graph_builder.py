@@ -76,12 +76,16 @@ Return your extraction as JSON."""
         self,
         query: str,
         retrieved_text: str,
+        evidence_context: str,
         history_summary: str = "",
     ) -> str:
         return f"""Extract entity–relationship triples from the following retrieval context.
 
 === Original Query ===
 {query}
+
+=== Structured Evidence Items ===
+{evidence_context}
 
 === Retrieved Information ===
 {retrieved_text}
@@ -99,7 +103,8 @@ Extract all relevant entity-relationship triples.  Return JSON:
             "relationship": "inhibits",
             "confidence": 0.95,
             "evidence_text": "Imatinib is a tyrosine kinase inhibitor targeting BCR-ABL fusion protein",
-            "source_db": "ChEMBL"
+            "source_db": "ChEMBL",
+            "evidence_ids": ["E1"]
         }}
     ],
     "entity_summary": "Brief summary of the key entities and their roles",
@@ -133,11 +138,13 @@ Extract ALL relevant triples from the retrieved information.  Be thorough."""
 
         # Build history summary from previous reasoning steps
         history_summary = self._build_history_summary(state)
+        evidence_context = self._build_evidence_context(state)
 
         # Ask LLM to extract triples
         triples_data = self._extract_triples(
             state.original_query,
             retrieved_text,
+            evidence_context,
             history_summary,
         )
 
@@ -175,13 +182,14 @@ Extract ALL relevant triples from the retrieved information.  Be thorough."""
         self,
         query: str,
         retrieved_text: str,
+        evidence_context: str,
         history_summary: str,
     ) -> Dict[str, Any]:
         """Use LLM to extract entity–relationship triples."""
         messages = [
             {"role": "system", "content": self.get_system_prompt()},
             {"role": "user", "content": self.get_extraction_prompt(
-                query, retrieved_text, history_summary,
+                query, retrieved_text, evidence_context, history_summary,
             )},
         ]
         try:
@@ -211,6 +219,9 @@ Extract ALL relevant triples from the retrieved information.  Be thorough."""
                 confidence = float(triple.get("confidence", 0.5))
                 evidence_text = triple.get("evidence_text", "")
                 source_db = triple.get("source_db", "unknown")
+                evidence_ids = [
+                    str(value) for value in triple.get("evidence_ids", []) if value
+                ]
 
                 if not src_name or not tgt_name:
                     continue
@@ -238,10 +249,12 @@ Extract ALL relevant triples from the retrieved information.  Be thorough."""
                     target=target_entity,
                     relation_type=relationship,
                     evidence=[source_db] if source_db else [],
-                    confidence=max(0.0, min(1.0, confidence)),
+                    confidence=max(0.0, min(1.0, confidence if evidence_ids else min(confidence, 0.25))),
                     attributes={
                         "evidence_text": evidence_text,
                         "source_db": source_db,
+                        "evidence_ids": evidence_ids,
+                        "evidence_support": "grounded" if evidence_ids else "ungrounded",
                     },
                 )
                 subgraph.add_edge(edge)
@@ -251,3 +264,16 @@ Extract ALL relevant triples from the retrieved information.  Be thorough."""
                 continue
 
         return subgraph
+
+    @staticmethod
+    def _build_evidence_context(state: AgentState) -> str:
+        if not getattr(state, "evidence_items", None):
+            return "(no structured evidence items)"
+
+        lines = []
+        for item in state.evidence_items[:30]:
+            lines.append(
+                f"[{item.evidence_id}] claim={item.claim} | source={item.source_skill} | "
+                f"locator={item.source_locator} | snippet={item.snippet[:240]}"
+            )
+        return "\n".join(lines)

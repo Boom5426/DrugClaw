@@ -36,14 +36,17 @@ from .llm_client import LLMClient
 from .skills import build_default_registry, WebSearchSkill
 from .skills.registry import SkillRegistry
 from .agent_coder import CoderAgent
+from .agent_planner import PlannerAgent
 from .agent_retriever import RetrieverAgent
 from .agent_graph_builder import GraphBuilderAgent
 from .agent_reranker import RerankerAgent
 from .agent_responder import ResponderAgent
 from .agent_reflector import ReflectorAgent
 from .agent_websearch import WebSearchAgent
+from .claim_assessment import assess_claims
 from .query_logger import QueryLogger, QuerySession
 from .response_formatter import wrap_answer_card
+from .resource_registry import build_resource_registry
 
 
 class DrugClawSystem:
@@ -51,11 +54,10 @@ class DrugClawSystem:
     Main orchestration system for drug-specialised agentic RAG.
     Uses LangGraph to manage the multi-agent workflow.
 
-    The RAG retrieval layer is powered by a SkillRegistry that aggregates
-    results from 68 curated drug knowledge sources (+ WebSearchSkill) across
-    15 subcategories.  Retrieval is now handled by a Code Agent that writes
-    custom query code per skill, and graph construction is done by an LLM-driven
-    Graph Build Agent.
+    The RAG retrieval layer is powered by a SkillRegistry plus a resource
+    registry summary that expose the current runtime resource set and status.
+    Retrieval is handled by a Code Agent that writes custom query code per
+    skill, and graph construction is done by an LLM-driven Graph Build Agent.
     """
 
     def __init__(
@@ -74,11 +76,13 @@ class DrugClawSystem:
         # LLM
         self.llm_client = LLMClient(config)
 
-        # Skill registry (68 drug resources + WebSearchSkill)
+        # Runtime skill registry; the resource registry derives authoritative
+        # counts and status from this runtime view.
         self.skill_registry = (
             skill_registry if skill_registry is not None
             else build_default_registry(self.config)
         )
+        self.resource_registry = build_resource_registry(self.skill_registry)
         # Backward-compat alias
         self.kg_manager = self.skill_registry
 
@@ -86,6 +90,7 @@ class DrugClawSystem:
         _web_skill = self.skill_registry.get_skill("WebSearch")
 
         # Agents
+        self.planner = PlannerAgent(self.llm_client)
         self.coder = CoderAgent(self.llm_client, self.skill_registry)
         self.retriever = RetrieverAgent(
             self.llm_client, self.skill_registry, coder_agent=self.coder,
@@ -111,14 +116,13 @@ class DrugClawSystem:
         Build a single StateGraph that routes between the three thinking modes.
 
         Graph topology:
-          entry_router ──(mode=graph|simple)──► retrieve
+          entry_router ──(mode=graph|simple)──► plan
                        ──(mode=web_only)──────► web_search_direct
 
-          retrieve ──(graph)──► graph_build ──► rerank ──► respond ──► reflect
-                   ──(simple)──► simple_respond ──► finalize
-
-          reflect ──(continue)──► web_search ──► retrieve   (graph loop)
-                  ──(finalize)──► finalize
+          plan ──► retrieve ──► normalize_evidence
+          normalize_evidence ──(graph)──► optional_graph ──► graph_build ──► rerank ──► assess_claims ──► respond ──► finalize
+                                           └──────────────► assess_claims
+                             ──(simple)──► assess_claims ──► simple_respond ──► finalize
 
           web_search_direct ──► finalize
           finalize ──► END
@@ -126,11 +130,14 @@ class DrugClawSystem:
         wf = StateGraph(AgentState)
 
         wf.add_node("entry_router",       self._entry_router_node)
+        wf.add_node("plan",               self._plan_node)
         wf.add_node("retrieve",           self._retrieve_node)
+        wf.add_node("normalize_evidence", self._normalize_evidence_node)
+        wf.add_node("optional_graph",     self._optional_graph_node)
         wf.add_node("graph_build",        self._graph_build_node)
         wf.add_node("rerank",             self._rerank_node)
+        wf.add_node("assess_claims",      self._assess_claims_node)
         wf.add_node("respond",            self._respond_node)
-        wf.add_node("reflect",            self._reflect_node)
         wf.add_node("web_search",         self._web_search_node)
         wf.add_node("simple_respond",     self._simple_respond_node)
         wf.add_node("web_search_direct",  self._web_search_direct_node)
@@ -142,28 +149,35 @@ class DrugClawSystem:
         wf.add_conditional_edges(
             "entry_router",
             self._route_by_mode,
-            {"retrieve": "retrieve", "web_search_direct": "web_search_direct"},
+            {"plan": "plan", "web_search_direct": "web_search_direct"},
         )
 
-        # retrieve → next step depends on mode
+        wf.add_edge("plan", "retrieve")
+        wf.add_edge("retrieve", "normalize_evidence")
+
+        # normalize → next step depends on mode
         wf.add_conditional_edges(
-            "retrieve",
-            self._after_retrieve,
-            {"graph_build": "graph_build", "simple_respond": "simple_respond"},
+            "normalize_evidence",
+            self._after_normalize_evidence,
+            {"optional_graph": "optional_graph", "assess_claims": "assess_claims"},
+        )
+        wf.add_conditional_edges(
+            "optional_graph",
+            self._after_optional_graph,
+            {"graph_build": "graph_build", "assess_claims": "assess_claims"},
         )
 
-        # graph mode pipeline: graph_build → rerank → respond → reflect
+        # graph mode pipeline: graph_build → rerank → assess_claims → respond
         wf.add_edge("graph_build", "rerank")
-        wf.add_edge("rerank",     "respond")
-        wf.add_edge("respond",    "reflect")
+        wf.add_edge("rerank",     "assess_claims")
         wf.add_conditional_edges(
-            "reflect",
-            self._should_continue,
-            {"continue": "web_search", "finalize": "finalize"},
+            "assess_claims",
+            self._after_assessment,
+            {"respond": "respond", "simple_respond": "simple_respond"},
         )
-        wf.add_edge("web_search", "retrieve")
 
         # simple / web_only termination
+        wf.add_edge("respond",           "finalize")
         wf.add_edge("simple_respond",    "finalize")
         wf.add_edge("web_search_direct", "finalize")
         wf.add_edge("finalize",          END)
@@ -178,18 +192,24 @@ class DrugClawSystem:
         mode = getattr(state, "thinking_mode", ThinkingMode.GRAPH)
         if str(mode) == ThinkingMode.WEB_ONLY:
             return "web_search_direct"
-        return "retrieve"
+        return "plan"
 
-    def _after_retrieve(self, state: AgentState) -> str:
+    def _after_normalize_evidence(self, state: AgentState) -> str:
+        mode = getattr(state, "thinking_mode", ThinkingMode.GRAPH)
+        if str(mode) == ThinkingMode.GRAPH:
+            return "optional_graph"
+        return "assess_claims"
+
+    def _after_optional_graph(self, state: AgentState) -> str:
+        if getattr(state, "graph_decision_reason", "").startswith("run:"):
+            return "graph_build"
+        return "assess_claims"
+
+    def _after_assessment(self, state: AgentState) -> str:
         mode = getattr(state, "thinking_mode", ThinkingMode.GRAPH)
         if str(mode) == ThinkingMode.SIMPLE:
             return "simple_respond"
-        return "graph_build"
-
-    def _should_continue(self, state: AgentState) -> str:
-        if state.should_continue and not state.max_iterations_reached:
-            return "continue"
-        return "finalize"
+        return "respond"
 
     # ------------------------------------------------------------------
     # Node wrappers
@@ -203,8 +223,25 @@ class DrugClawSystem:
               + (f"  resource_filter={rf}" if rf else ""))
         return state
 
+    def _plan_node(self, state: AgentState) -> AgentState:
+        self._record_stage(state, "PLAN")
+        if state.query_plan is None:
+            omics_constraints = self._format_omics_constraints(
+                state.omics_constraints
+            )
+            state.query_plan = self.planner.plan(
+                state.original_query,
+                omics_constraints=omics_constraints,
+            )
+        return state
+
     def _retrieve_node(self, state: AgentState) -> AgentState:
+        self._record_stage(state, "RETRIEVE")
         return self.retriever.execute(state)
+
+    def _normalize_evidence_node(self, state: AgentState) -> AgentState:
+        self._record_stage(state, "NORMALIZE_EVIDENCE")
+        return state
 
     def _graph_build_node(self, state: AgentState) -> AgentState:
         """Graph mode: LLM extracts entity triples from retrieval text."""
@@ -213,7 +250,23 @@ class DrugClawSystem:
     def _rerank_node(self, state: AgentState) -> AgentState:
         return self.reranker.execute(state)
 
+    def _optional_graph_node(self, state: AgentState) -> AgentState:
+        should_run, reason = self._should_run_graph(state)
+        state.graph_decision_reason = ("run:" if should_run else "skip:") + reason
+        self._record_stage(
+            state,
+            "OPTIONAL_GRAPH:run" if should_run else "OPTIONAL_GRAPH:skipped",
+        )
+        return state
+
+    def _assess_claims_node(self, state: AgentState) -> AgentState:
+        self._record_stage(state, "ASSESS_CLAIMS")
+        if state.evidence_items:
+            state.claim_assessments = assess_claims(state.evidence_items)
+        return state
+
     def _respond_node(self, state: AgentState) -> AgentState:
+        self._record_stage(state, "ANSWER")
         return self.responder.execute(state)
 
     def _reflect_node(self, state: AgentState) -> AgentState:
@@ -236,6 +289,7 @@ class DrugClawSystem:
 
     def _simple_respond_node(self, state: AgentState) -> AgentState:
         """Simple-mode: synthesize retrieved text directly."""
+        self._record_stage(state, "ANSWER")
         return self.responder.execute_simple(state)
 
     def _web_search_direct_node(self, state: AgentState) -> AgentState:
@@ -247,7 +301,55 @@ class DrugClawSystem:
         state.final_answer = state.current_answer
         # Store raw answer for the formatter (used during logging)
         state.metadata = getattr(state, "metadata", {})
+        if state.final_answer_structured is None and state.evidence_items:
+            state.final_answer_structured = self.responder._build_final_answer(
+                state.original_query,
+                state.evidence_items,
+            )
         return state
+
+    @staticmethod
+    def _record_stage(state: AgentState, stage: str) -> None:
+        state.execution_stage = stage
+        state.execution_trace.append(stage)
+
+    @staticmethod
+    def _should_run_graph(state: AgentState) -> tuple[bool, str]:
+        plan = getattr(state, "query_plan", None)
+        if plan is None:
+            return False, "query plan unavailable"
+        if not getattr(plan, "requires_graph_reasoning", False):
+            return False, "planner did not recommend graph reasoning"
+
+        entities = getattr(plan, "entities", {}) or {}
+        entity_count = sum(len(values) for values in entities.values())
+        if entity_count >= 2:
+            return True, "multiple entities suggest relational composition"
+
+        question_type = str(getattr(plan, "question_type", ""))
+        if question_type in {"ddi_mechanism", "mechanism", "evidence_synthesis", "adr_causal"}:
+            return True, f"question type `{question_type}` benefits from graph reasoning"
+
+        if len(getattr(state, "evidence_items", []) or []) >= 2:
+            return True, "multiple evidence items available for composition"
+
+        return False, "evidence shape does not justify graph reasoning"
+
+    @staticmethod
+    def _format_omics_constraints(constraints: Optional[OmicsConstraints]) -> str:
+        if constraints is None:
+            return "No specific biological constraints provided."
+
+        parts = []
+        if constraints.gene_sets:
+            parts.append(f"Genes: {', '.join(constraints.gene_sets[:10])}")
+        if constraints.pathway_sets:
+            parts.append(f"Pathways: {', '.join(constraints.pathway_sets[:10])}")
+        if constraints.disease_terms:
+            parts.append(f"Diseases: {', '.join(constraints.disease_terms)}")
+        if constraints.tissue_types:
+            parts.append(f"Tissues: {', '.join(constraints.tissue_types)}")
+        return "\n".join(parts) if parts else "No specific constraints."
 
     # ------------------------------------------------------------------
     # Public API
@@ -297,6 +399,7 @@ class DrugClawSystem:
             final = self.workflow.invoke(initial_state)
 
             final_answer    = final.get("final_answer", final.get("current_answer", ""))
+            final_answer_structured = final.get("final_answer_structured")
             iteration       = final.get("iteration", 0)
             current_reward  = final.get("current_reward", 0.0)
             reasoning_steps = final.get("reasoning_steps", [])
@@ -306,11 +409,28 @@ class DrugClawSystem:
             result = {
                 "query":              query,
                 "answer":             final_answer,
+                "final_answer_structured": (
+                    final_answer_structured.to_dict()
+                    if hasattr(final_answer_structured, "to_dict")
+                    else final_answer_structured
+                ),
+                "query_plan": (
+                    final.get("query_plan").to_dict()
+                    if getattr(final.get("query_plan"), "to_dict", None)
+                    else final.get("query_plan")
+                ),
+                "claim_assessments": [
+                    assessment.to_dict() if hasattr(assessment, "to_dict") else assessment
+                    for assessment in final.get("claim_assessments", [])
+                ],
                 "mode":               thinking_mode,
                 "resource_filter":    resource_filter or [],
                 "iterations":         iteration,
                 "evidence_graph_size": subgraph_size,
                 "final_reward":       current_reward,
+                "execution_trace":    final.get("execution_trace", []),
+                "execution_stage":    final.get("execution_stage", ""),
+                "graph_decision_reason": final.get("graph_decision_reason", ""),
                 "reasoning_history":  [
                     {
                         "step": s.step_id,
@@ -321,6 +441,10 @@ class DrugClawSystem:
                     for s in reasoning_steps
                 ],
                 "retrieved_content":  final.get("retrieved_content", []),
+                "evidence_items": [
+                    item.to_dict() if hasattr(item, "to_dict") else item
+                    for item in final.get("evidence_items", [])
+                ],
                 "retrieved_text":     final.get("retrieved_text", ""),
                 "reflection_feedback": final.get("reflection_feedback", ""),
                 "web_search_results": final.get("web_search_results", []),

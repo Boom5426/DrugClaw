@@ -21,6 +21,7 @@ from html import unescape
 from typing import Any, Dict, List, Optional
 
 from ...base import RAGSkill, RetrievalResult, AccessMode
+from drugclaw.evidence import EvidenceItem, score_evidence_item
 
 logger = logging.getLogger(__name__)
 
@@ -221,3 +222,39 @@ class MedlinePlusSkill(RAGSkill):
                 },
             ))
         return results
+
+    def build_evidence_items(
+        self,
+        records: List[Dict[str, Any]],
+        query: str = "",
+    ) -> List[EvidenceItem]:
+        items: List[EvidenceItem] = []
+        for index, record in enumerate(records, start=1):
+            metadata = record.get("metadata", {})
+            source_entity = record.get("source_entity", "")
+            title = metadata.get("title") or record.get("target_entity", "")
+            claim = f"{source_entity} has MedlinePlus patient guidance".strip()
+            locator = (record.get("sources") or [metadata.get("url") or "MedlinePlus"])[0]
+            item = EvidenceItem(
+                evidence_id=f"medlineplus:{index}",
+                source_skill=self.name,
+                source_type="label_text",
+                source_title=title or "MedlinePlus Drug Info",
+                source_locator=str(locator),
+                snippet=record.get("evidence_text", ""),
+                structured_payload={
+                    "title": title,
+                    "url": metadata.get("url", ""),
+                    "access_via": metadata.get("access_via", ""),
+                },
+                claim=claim,
+                evidence_kind="label_text",
+                support_direction="supports",
+                confidence=0.0,
+                retrieval_score=0.8,
+                timestamp="2026-03-18T00:00:00Z",
+                metadata={"skill_category": self.subcategory},
+            )
+            item.confidence = score_evidence_item(item)
+            items.append(item)
+        return items

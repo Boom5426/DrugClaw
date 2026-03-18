@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 from typing import List
 
@@ -11,6 +13,7 @@ from .config import Config
 from .main_system import DrugClawSystem
 from .models import ThinkingMode
 from .skills import build_default_registry
+from .resource_registry import build_resource_registry
 
 
 DEMO_PRESETS = {
@@ -72,6 +75,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Comma-separated skill names, e.g. 'SIDER,FAERS'.",
     )
+    run_parser.add_argument(
+        "--show-evidence",
+        action="store_true",
+        help="Print structured evidence, key claims, and confidence after the answer.",
+    )
+    run_parser.add_argument(
+        "--show-plan",
+        action="store_true",
+        help="Print the structured query plan summary after the answer.",
+    )
+    run_parser.add_argument(
+        "--show-claims",
+        action="store_true",
+        help="Print structured claim assessment summaries after the answer.",
+    )
 
     demo_parser = subparsers.add_parser(
         "demo",
@@ -88,6 +106,21 @@ def build_parser() -> argparse.ArgumentParser:
         default="navigator_api_keys.json",
         help="Path to navigator_api_keys.json.",
     )
+    demo_parser.add_argument(
+        "--show-evidence",
+        action="store_true",
+        help="Print structured evidence, key claims, and confidence after the answer.",
+    )
+    demo_parser.add_argument(
+        "--show-plan",
+        action="store_true",
+        help="Print the structured query plan summary after the answer.",
+    )
+    demo_parser.add_argument(
+        "--show-claims",
+        action="store_true",
+        help="Print structured claim assessment summaries after the answer.",
+    )
 
     doctor_parser = subparsers.add_parser(
         "doctor",
@@ -102,6 +135,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "list",
         help="List built-in demos, modes, and recommended first commands.",
+    )
+    list_parser = subparsers.choices["list"]
+    list_parser.add_argument(
+        "--key-file",
+        default="navigator_api_keys.json",
+        help="Path to api_keys.json or navigator_api_keys.json.",
     )
 
     return parser
@@ -153,10 +192,67 @@ def _doctor_check_imports() -> List[str]:
     return lines
 
 
+def _load_registry_for_cli(key_file: str, *, strict_config: bool) -> tuple[object, object]:
+    try:
+        config = Config(key_file=key_file)
+    except Exception:
+        if strict_config:
+            raise
+        config = SimpleNamespace(SKILL_CONFIGS={}, KG_ENDPOINTS={})
+
+    previous_disable_level = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+    try:
+        skill_registry = build_default_registry(config)
+        resource_registry = build_resource_registry(skill_registry)
+    finally:
+        logging.disable(previous_disable_level)
+    return skill_registry, resource_registry
+
+
+def _registry_summary_lines(summary: dict) -> List[str]:
+    lines = [
+        _status_line("registry_total_resources", True, str(summary["total_resources"])),
+        _status_line("registry_enabled_resources", True, str(summary["enabled_resources"])),
+    ]
+    for status_name in (
+        "ready",
+        "degraded",
+        "missing_metadata",
+        "missing_dependency",
+        "disabled",
+    ):
+        lines.append(
+            _status_line(
+                f"registry_status:{status_name}",
+                True,
+                str(summary["status_counts"].get(status_name, 0)),
+            )
+        )
+    return lines
+
+
+def _doctor_check_registry(key_file: str) -> List[str]:
+    try:
+        _, resource_registry = _load_registry_for_cli(key_file, strict_config=False)
+    except Exception as exc:
+        return [_status_line("registry", False, f"cannot build resource registry ({exc})")]
+
+    lines = _registry_summary_lines(resource_registry.summarize_registry())
+    for entry in resource_registry.get_all_resources():
+        usable = entry.status == "ready"
+        detail = (
+            f"category={entry.category}; access={entry.access_mode}; "
+            f"status={entry.status}; reason={entry.status_reason}"
+        )
+        lines.append(_status_line(f"resource:{entry.name}", usable or not entry.enabled, detail))
+    return lines
+
+
 def _doctor_check_presets(key_file: str) -> List[str]:
     lines: List[str] = []
     try:
-        config = Config(key_file=key_file)
+        config, _ = _load_registry_for_cli(key_file, strict_config=True)
     except Exception as exc:
         return [_status_line("config", False, f"cannot initialize Config ({exc})")]
 
@@ -247,6 +343,7 @@ def _run_doctor(key_file: str) -> int:
     sections = [
         ("Configuration", _doctor_check_key_file(key_file)),
         ("Imports", _doctor_check_imports()),
+        ("Resource Registry", _doctor_check_registry(key_file)),
         ("Demo Presets", _doctor_check_presets(key_file)),
         ("CLI", _doctor_check_install_hint()),
         ("Git Safety", _doctor_check_git_safety()),
@@ -269,13 +366,20 @@ def _run_doctor(key_file: str) -> int:
     return 0
 
 
-def _run_list() -> int:
+def _run_list(key_file: str = "navigator_api_keys.json") -> int:
     print("[DrugClaw list] quick navigation")
+    _, resource_registry = _load_registry_for_cli(key_file, strict_config=False)
+    summary = resource_registry.summarize_registry()
 
     print("\n== Recommended First Commands ==")
     print("python -m drugclaw doctor")
     print("python -m drugclaw demo")
     print('python -m drugclaw run --query "What are the known drug targets of imatinib?"')
+
+    print("\n== Registry Summary ==")
+    print("- The resource registry is the source of truth for resource counts and status.")
+    for line in _registry_summary_lines(summary):
+        print(line)
 
     print("\n== Built-in Demos ==")
     for name, preset in DEMO_PRESETS.items():
@@ -297,6 +401,17 @@ def _run_list() -> int:
     print("\n== Notes ==")
     print("- Prefer `demo` or `run --mode simple` for the first experience.")
     print("- Use `doctor` first if you are unsure whether local resources are ready.")
+    print("- Use the resource status below to diagnose empty or degraded retrieval.")
+
+    print("\n== Resource Status ==")
+    for entry in resource_registry.get_all_resources():
+        print(
+            f"- {entry.name} [{entry.category}]"
+            f" access={entry.access_mode}"
+            f" enabled={entry.enabled}"
+            f" status={entry.status}"
+        )
+        print(f"  reason={entry.status_reason}")
     return 0
 
 
@@ -306,6 +421,9 @@ def _run_query(
     thinking_mode: str,
     key_file: str,
     resource_filter: List[str] | None,
+    show_evidence: bool = False,
+    show_plan: bool = False,
+    show_claims: bool = False,
 ) -> int:
     config = Config(key_file=key_file)
     system = DrugClawSystem(config)
@@ -316,7 +434,80 @@ def _run_query(
         resource_filter=resource_filter or [],
     )
 
+    if show_evidence:
+        _print_evidence_summary(result)
+    if show_plan:
+        _print_plan_summary(result)
+    if show_claims:
+        _print_claim_summary(result)
+
     return 0 if result.get("success") else 1
+
+
+def _print_evidence_summary(result: dict) -> None:
+    structured = result.get("final_answer_structured") or {}
+    if not structured:
+        print("\n[DrugClaw evidence] no structured evidence available")
+        return
+
+    print("\n== Evidence Summary ==")
+    print(f"summary_confidence={structured.get('summary_confidence', 0.0):.2f}")
+
+    for claim in structured.get("key_claims", [])[:5]:
+        evidence_ids = ", ".join(claim.get("evidence_ids", []))
+        print(
+            f"- {claim.get('claim', '')} "
+            f"(confidence={claim.get('confidence', 0.0):.2f}; evidence={evidence_ids})"
+        )
+
+    warnings = structured.get("warnings", [])
+    if warnings:
+        print("warnings=" + " | ".join(warnings[:5]))
+
+    limitations = structured.get("limitations", [])
+    if limitations:
+        print("limitations=" + " | ".join(limitations[:5]))
+
+
+def _print_plan_summary(result: dict) -> None:
+    plan = result.get("query_plan") or {}
+    if not plan:
+        print("\n[DrugClaw plan] no structured query plan available")
+        return
+
+    print("\n== Query Plan ==")
+    print(f"question_type={plan.get('question_type', 'unknown')}")
+
+    preferred_skills = plan.get("preferred_skills", [])
+    if preferred_skills:
+        print("preferred_skills=" + ", ".join(preferred_skills))
+
+    print(
+        "requires_graph_reasoning="
+        + str(plan.get("requires_graph_reasoning", False))
+    )
+
+    graph_reason = result.get("graph_decision_reason", "")
+    if graph_reason:
+        print(f"graph_decision_reason={graph_reason}")
+
+
+def _print_claim_summary(result: dict) -> None:
+    assessments = result.get("claim_assessments") or []
+    if not assessments:
+        print("\n[DrugClaw claims] no structured claim assessments available")
+        return
+
+    print("\n== Claim Assessments ==")
+    for assessment in assessments[:5]:
+        support_ids = ", ".join(assessment.get("supporting_evidence_ids", []))
+        contradict_ids = ", ".join(assessment.get("contradicting_evidence_ids", []))
+        print(
+            f"- {assessment.get('claim', '')} "
+            f"(verdict={assessment.get('verdict', 'unknown')}; "
+            f"confidence={assessment.get('confidence', 0.0):.2f}; "
+            f"support={support_ids or '-'}; contradict={contradict_ids or '-'})"
+        )
 
 
 def main(argv: List[str] | None = None) -> int:
@@ -329,13 +520,16 @@ def main(argv: List[str] | None = None) -> int:
             thinking_mode=args.mode,
             key_file=args.key_file,
             resource_filter=args.resource_filter,
+            show_evidence=args.show_evidence,
+            show_plan=args.show_plan,
+            show_claims=args.show_claims,
         )
 
     if args.command == "doctor":
         return _run_doctor(args.key_file)
 
     if args.command == "list":
-        return _run_list()
+        return _run_list(args.key_file)
 
     preset = DEMO_PRESETS[args.preset]
     print(f"[DrugClaw demo] preset={args.preset} - {preset['description']}")
@@ -346,4 +540,7 @@ def main(argv: List[str] | None = None) -> int:
         thinking_mode=preset["mode"],
         key_file=args.key_file,
         resource_filter=preset["resource_filter"],
+        show_evidence=args.show_evidence,
+        show_plan=args.show_plan,
+        show_claims=args.show_claims,
     )

@@ -16,6 +16,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional
 
 from ...base import RAGSkill, RetrievalResult, AccessMode
+from drugclaw.evidence import EvidenceItem, score_evidence_item
 
 logger = logging.getLogger(__name__)
 
@@ -206,3 +207,43 @@ class OpenTargetsSkill(RAGSkill):
             else:
                 return None
         return node
+
+    def build_evidence_items(
+        self,
+        records: List[Dict[str, Any]],
+        query: str = "",
+    ) -> List[EvidenceItem]:
+        items: List[EvidenceItem] = []
+        for index, record in enumerate(records, start=1):
+            metadata = record.get("metadata", {})
+            relationship = record.get("relationship", "")
+            source_entity = record.get("source_entity", "")
+            target_entity = record.get("target_entity", "")
+            predictive = relationship == "linked_target"
+            item = EvidenceItem(
+                evidence_id=f"opentargets:{index}",
+                source_skill=self.name,
+                source_type="prediction" if predictive else "database",
+                source_title="Open Targets Platform drug-target evidence",
+                source_locator=(
+                    f"{metadata.get('chembl_id', '')}:{metadata.get('target_id', '')}".strip(":")
+                    or "Open Targets Platform"
+                ),
+                snippet=record.get("evidence_text", ""),
+                structured_payload={
+                    "chembl_id": metadata.get("chembl_id", ""),
+                    "target_id": metadata.get("target_id", ""),
+                    "gene_symbol": metadata.get("gene_symbol", ""),
+                    "relationship": relationship,
+                },
+                claim=f"{source_entity} {relationship} {target_entity}".strip(),
+                evidence_kind="model_prediction" if predictive else "database_record",
+                support_direction="supports",
+                confidence=0.0,
+                retrieval_score=0.55 if predictive else 0.78,
+                timestamp="2026-03-18T00:00:00Z",
+                metadata={"skill_category": self.subcategory},
+            )
+            item.confidence = score_evidence_item(item)
+            items.append(item)
+        return items

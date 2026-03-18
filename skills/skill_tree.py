@@ -1,7 +1,7 @@
 """
 Skill Tree for DrugClaw RAG retrieval.
 
-Organises all 70 LLM-friendly resources into a 15-subcategory tree so the
+Organises the catalogued resources into a 15-subcategory tree so the
 RetrieverAgent can navigate to the right skills without scanning a flat list.
 
 Tree layout (15 subcategories as top-level nodes → leaf skill nodes)
@@ -97,7 +97,7 @@ class _LegacyDomain:
 
 class SkillTree:
     """
-    15-subcategory skill tree covering all 70 LLM-friendly drug resources.
+    15-subcategory skill tree covering the catalogued drug resources.
 
     The tree is used by:
       - SkillRegistry.skill_tree_prompt   → full tree for the system prompt
@@ -150,7 +150,7 @@ class SkillTree:
         ○  = catalogued but not yet implemented
         """
         header = (
-            "=== DrugClaw Skill Tree (70 LLM-Friendly Drug Resources) ===\n"
+            "=== DrugClaw Skill Tree ===\n"
             "15 subcategories — navigate to the right one for your query.\n"
             "✓ = implemented & available   ○ = catalogued, not yet callable\n"
         )
@@ -220,7 +220,7 @@ class SkillTree:
 
 
 # ---------------------------------------------------------------------------
-# Tree data — all 70 resources
+# Tree data — catalogued resources
 # ---------------------------------------------------------------------------
 
 def _build_subcategories() -> List[Subcategory]:

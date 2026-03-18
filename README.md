@@ -14,8 +14,8 @@
 
 <p align="center">
   <img alt="Domain" src="https://img.shields.io/badge/Domain-Drug%20Intelligence-1f6feb">
-  <img alt="Resources" src="https://img.shields.io/badge/Resources-70%20Curated-0a7f5a">
-  <img alt="Skills" src="https://img.shields.io/badge/Implemented%20Skills-57-f59e0b">
+  <img alt="Registry" src="https://img.shields.io/badge/Registry-Source%20of%20Truth-0a7f5a">
+  <img alt="Skills" src="https://img.shields.io/badge/Skills-Registry%20Driven-f59e0b">
   <img alt="Modes" src="https://img.shields.io/badge/Modes-GRAPH%20%7C%20SIMPLE%20%7C%20WEB__ONLY-7c3aed">
 </p>
 
@@ -27,11 +27,13 @@ It is not a generic RAG stack with a biomedical prompt on top. DrugClaw is opini
 
 Most biomedical QA systems stop at "retrieve a few passages and summarize them." Drug questions are harder: they require precise handling of target evidence, ADR provenance, DDI mechanisms, labeling details, and PGx constraints. Some tools connect many databases but flatten them into a single rigid interface; others optimize for conversational UX while relying on weak, thin, or poorly traceable evidence.
 
-- Organizes **70 curated drug resources** into a navigable **15-subcategory skill tree**
+- Organizes drug resources through a **registry-backed 15-subcategory skill tree**
 - Uses a **Code Agent** to query each source in its native style instead of forcing one rigid abstraction
 - Supports **graph-based reasoning** for multi-hop evidence synthesis
 - Keeps **Web Search** as a fallback for recent literature and external evidence
 - Built around **drug-native tasks**, not generic biomedical branding
+
+The runtime resource registry is the source of truth for what is currently enabled, degraded, missing local metadata, or disabled. Availability depends on the environment, local files under `resources_metadata/`, optional dependencies, and API reachability.
 
 In short, DrugClaw is not trying to be just another fluent assistant. Its goal is to raise resource density, retrieval fidelity, and evidence-grounded reasoning at the same time.
 
@@ -86,13 +88,22 @@ Then fill in your real credentials:
 | Ollama | `http://localhost:11434/v1` | `llama3.1`, `qwen2.5` |
 | Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-70B-Instruct-Turbo` |
 
-DrugClaw also accepts the legacy `OPENAI_API_KEY` field and `navigator_api_keys.json` filename for backward compatibility.
+<!-- DrugClaw also accepts the legacy `OPENAI_API_KEY` field and `navigator_api_keys.json` filename for backward compatibility.
 
 DrugClaw resolves key files in this order:
 
 - `DRUGCLAW_KEY_FILE` environment variable
 - `api_keys.json` in the repository root
 - `navigator_api_keys.json` in the repository root (legacy)
+
+DrugClaw recommends the new format above, but still accepts the legacy format:
+
+```json
+{
+  "OPENAI_API_KEY": "your-api-key-here",
+  "base_url": "https://your-endpoint.com/v1"
+}
+``` -->
 
 ### 3. Run the official CLI demo
 
@@ -259,7 +270,7 @@ For `LOCAL_FILE` skills, the recommended default behavior is:
 
 ### 2. Organized around drug tasks
 
-DrugClaw currently provides **57 implemented skills** across all 15 subcategories:
+DrugClaw covers all 15 subcategories through the runtime resource registry:
 
 - drug targets and activity (DTI)
 - adverse drug reactions and pharmacovigilance (ADR)
@@ -320,25 +331,42 @@ Code Agent
          -> Final Answer
 ```
 
-## Implemented Skills (57)
+## Registry Inspection
+
+Use the CLI to inspect the current registry summary and per-resource status:
+
+```bash
+python -m drugclaw list
+python -m drugclaw doctor
+```
+
+`list` shows registry-derived totals and a status line for each resource. `doctor` explains why a resource is unavailable, including missing metadata paths and missing dependencies when detectable.
+
+If you want the human-readable answer plus the structured claim/evidence summary, use:
+
+```bash
+python -m drugclaw run --query "What does imatinib target?" --show-evidence
+```
+
+## Implemented Skills
 
 | Category | Skills |
 | --- | --- |
-| DTI (10) | ChEMBL, BindingDB, DGIdb, Open Targets Platform, TTD, STITCH, TarKG, GDKD, Molecular Targets, Molecular Targets Data |
-| ADR (4) | FAERS, SIDER, nSIDES, ADReCS |
-| Drug Knowledgebase (8) | UniD3, DrugBank, IUPHAR/BPS, DrugCentral, CPIC, PharmKG, WHO Essential Medicines List, FDA Orange Book |
-| Drug Mechanism (1) | DRUGMECHDB |
-| Drug Labeling (3) | openFDA Human Drug, DailyMed, MedlinePlus Drug Info |
-| Drug Ontology (4) | RxNorm, ChEBI, ATC/DDD, NDF-RT |
-| Drug Repurposing (6) | RepoDB, DRKG, OREGANO, Drug Repurposing Hub, DrugRepoBank, RepurposeDrugs |
-| Pharmacogenomics (1) | PharmGKB |
-| DDI (3) | MecDDI, DDInter, KEGG Drug |
-| Drug Toxicity (4) | UniTox, LiverTox, DILIrank, DILI |
-| Drug Combination (2) | DrugCombDB, DrugComb |
-| Drug Molecular Property (1) | GDSC |
-| Drug Disease (1) | SemaTyP |
-| Drug Review (2) | WebMD Drug Reviews, Drug Reviews (Drugs.com) |
-| Drug NLP (7) | DDI Corpus 2013, DrugProt, ADE Corpus, CADEC, PsyTAR, TAC 2017 ADR, PHEE |
+| DTI | ChEMBL, BindingDB, DGIdb, Open Targets Platform, TTD, STITCH, TarKG, GDKD, Molecular Targets, Molecular Targets Data |
+| ADR | FAERS, SIDER, nSIDES, ADReCS |
+| Drug Knowledgebase | UniD3, DrugBank, IUPHAR/BPS, DrugCentral, CPIC, PharmKG, WHO Essential Medicines List, FDA Orange Book |
+| Drug Mechanism | DRUGMECHDB |
+| Drug Labeling | openFDA Human Drug, DailyMed, MedlinePlus Drug Info |
+| Drug Ontology | RxNorm, ChEBI, ATC/DDD, NDF-RT |
+| Drug Repurposing | RepoDB, DRKG, OREGANO, Drug Repurposing Hub, DrugRepoBank, RepurposeDrugs |
+| Pharmacogenomics | PharmGKB |
+| DDI | MecDDI, DDInter, KEGG Drug |
+| Drug Toxicity | UniTox, LiverTox, DILIrank, DILI |
+| Drug Combination | DrugCombDB, DrugComb |
+| Drug Molecular Property | GDSC |
+| Drug Disease | SemaTyP |
+| Drug Review | WebMD Drug Reviews, Drug Reviews (Drugs.com) |
+| Drug NLP | DDI Corpus 2013, DrugProt, ADE Corpus, CADEC, PsyTAR, TAC 2017 ADR, PHEE |
 
 `WebSearch` is also available as an external retrieval supplement built around DuckDuckGo + PubMed style search.
 

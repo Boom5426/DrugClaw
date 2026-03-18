@@ -24,7 +24,7 @@ class RerankerAgent:
     
     def get_system_prompt(self) -> str:
         """System prompt for the re-ranker agent"""
-        return """You are the Re-ranker Agent of DrugClaw — a drug-specialized agentic RAG system. You operate on evidence retrieved from 68 curated drug knowledge resources spanning drug-target interactions, adverse drug reactions, drug-drug interactions, drug mechanisms, pharmacogenomics, and more.
+        return """You are the Re-ranker Agent of DrugClaw — a drug-specialized agentic RAG system. You operate on evidence retrieved from the current runtime resource registry spanning drug-target interactions, adverse drug reactions, drug-drug interactions, drug mechanisms, pharmacogenomics, and more.
 
 Your role is to:
 1. Evaluate evidence paths through the drug knowledge graph

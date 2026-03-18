@@ -400,7 +400,7 @@ class WebSearchAgent:
     
     def get_system_prompt(self) -> str:
         """System prompt for the web search agent"""
-        return """You are the Web Search Agent of DrugClaw — a drug-specialized agentic RAG system. You supplement the structured drug knowledge retrieval (from 68 curated resources) with live web search to fill gaps or find the latest drug-related information.
+        return """You are the Web Search Agent of DrugClaw — a drug-specialized agentic RAG system. You supplement the structured drug knowledge retrieval with live web search to fill gaps or find the latest drug-related information.
 
 Your role is to search for drug-focused information including:
 

@@ -1,14 +1,9 @@
 """
-DrugClaw RAG Skills Package - 70 LLM-Friendly Drug Resources + WebSearch
-=========================================================================
-Organized by 15 subcategories (from 68DrugResources.xlsx + 2 NCI targets)
-plus a web_search skill that wraps DuckDuckGo (free) + PubMed E-utilities (free).
+DrugClaw RAG skills package.
 
-Access modes: REST_API | CLI | LOCAL_FILE | DATASET
-CLI-capable: ChEMBL (chembl_webresource_client), ChEBI (libchebipy), KEGG Drug (bioservices)
-
-Implemented skills (57): those with working example.py + SKILL.md in their directory.
-Stub skills (13): interface only, not yet implemented — kept for future development.
+The runtime resource registry is the authoritative source for active resource
+counts and status. This package keeps the concrete skill implementations,
+their catalog metadata, and the build_default_registry() factory.
 """
 from .base import RAGSkill, DatasetRAGSkill, RetrievalResult, AccessMode
 from .registry import SkillRegistry
@@ -17,7 +12,7 @@ from .skill_tree import SkillTree, SkillNode, Subcategory
 SubDomain = Subcategory  # legacy alias
 Domain = Subcategory     # legacy alias
 
-# --- Implemented skills (57) — have example.py + SKILL.md ---
+# --- Implemented skills — have example.py + SKILL.md ---
 from .dti import (ChEMBLSkill, BindingDBSkill, DGIdbSkill, OpenTargetsSkill,
     TTDSkill, STITCHSkill, TarKGSkill, GDKDSkill, MolecularTargetsSkill,
     MolecularTargetsDataSkill)
@@ -55,11 +50,10 @@ from .drug_review import AskAPatientSkill
 
 def build_default_registry(config) -> SkillRegistry:
     """
-    Build a SkillRegistry pre-loaded with implemented skills only.
+    Build a SkillRegistry pre-loaded with the implemented runtime skills.
 
-    Only the 57 skills that have working example.py + SKILL.md are registered.
-    Stub skills (13) are NOT registered — their interfaces remain importable
-    for future development.
+    Stub skills are intentionally left unregistered; the resource registry
+    is responsible for reporting which catalog entries are disabled.
     """
     sc = getattr(config, "SKILL_CONFIGS", {})
     registry = SkillRegistry()

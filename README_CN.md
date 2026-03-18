@@ -14,8 +14,8 @@
 
 <p align="center">
   <img alt="Domain" src="https://img.shields.io/badge/领域-药物智能-1f6feb">
-  <img alt="Resources" src="https://img.shields.io/badge/资源-70%20个精选-0a7f5a">
-  <img alt="Skills" src="https://img.shields.io/badge/已实现技能-57-f59e0b">
+  <img alt="Registry" src="https://img.shields.io/badge/注册表-唯一真相源-0a7f5a">
+  <img alt="Skills" src="https://img.shields.io/badge/技能-由注册表驱动-f59e0b">
   <img alt="Modes" src="https://img.shields.io/badge/模式-GRAPH%20%7C%20SIMPLE%20%7C%20WEB__ONLY-7c3aed">
 </p>
 
@@ -27,11 +27,13 @@ DrugClaw 是一个围绕药物任务构建的多智能体 RAG 系统，专门处
 
 大多数生物医学问答系统停留在“检索几段文本然后总结”的层面，但药物问题真正难的地方，往往在于能不能把靶点证据、ADR 来源、DDI 机制、标签信息和 PGx 约束这些细节讲清楚。也有一些工具虽然接入了很多数据库，却把所有资源强行压成同一种接口，最后牺牲了资源本身的表达力；还有一些系统更强调对话体验或代理外壳，但底层缺少足够密集、结构化且可追溯的药物资源支撑，最终还是回到“语言流畅但证据偏薄”。
 
-- 将 **70 个精选药物资源**组织为可导航的 **15 类技能树**
+- 通过 **注册表驱动的 15 类技能树**组织药物资源
 - 通过 **Code Agent** 为不同资源现写查询代码，而不是强行塞进单一死板接口
 - 支持 **图结构推理**，更适合多跳药物证据综合
 - 保留 **Web Search** 作为最新文献和外部证据的补充通道
 - 从设计上就面向 **药物原生任务**，而不是泛化的 biomedical branding
+
+运行时资源注册表是资源数量、启用状态和可用性说明的唯一真相源。实际可用性取决于当前环境、本地 `resources_metadata/` 文件、可选依赖以及 API 可达性。
 
 换句话说，DrugClaw 的优势不是“再做一个会说话的助手”，而是尽量把药物资源的密度、检索的真实性和证据综合能力同时拉起来。它更适合回答那些需要跨多个资源交叉验证、需要说明证据来自哪里、以及需要把检索结果进一步组织成推理链的问题。
 
@@ -85,13 +87,22 @@ cp api_keys.example.json api_keys.json
 | Ollama | `http://localhost:11434/v1` | `llama3.1`, `qwen2.5` |
 | Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-70B-Instruct-Turbo` |
 
-也兼容旧版 `OPENAI_API_KEY` 字段和 `navigator_api_keys.json` 文件名。
+<!-- 也兼容旧版 `OPENAI_API_KEY` 字段和 `navigator_api_keys.json` 文件名。
 
 当前版本会按以下顺序查找配置文件：
 
 - 环境变量 `DRUGCLAW_KEY_FILE`
 - 仓库根目录下的 `api_keys.json`
 - 仓库根目录下的 `navigator_api_keys.json`（旧版兼容）
+
+当前推荐使用上面的新格式，但也兼容旧格式：
+
+```json
+{
+  "OPENAI_API_KEY": "your-api-key-here",
+  "base_url": "https://your-endpoint.com/v1"
+}
+``` -->
 
 ### 3. 直接运行官方 CLI Demo
 
@@ -261,7 +272,7 @@ system.query("...", thinking_mode=ThinkingMode.WEB_ONLY)
 
 ### 2. 明确围绕药物任务组织
 
-当前已落地 **57 个可用 skill**，覆盖全部 15 个子类别：
+当前通过运行时资源注册表覆盖全部 15 个子类别：
 
 - 药物靶点与活性（DTI）
 - 不良反应与药物警戒（ADR）
@@ -322,23 +333,40 @@ Code Agent
          -> 最终回答
 ```
 
+## 注册表检查
+
+可以通过 CLI 查看当前注册表摘要和逐资源状态：
+
+```bash
+python -m drugclaw list
+python -m drugclaw doctor
+```
+
+`list` 会显示基于注册表生成的总数和每个资源的状态。`doctor` 会解释资源为什么不可用，例如缺少本地 metadata 或缺少依赖。
+
+如果你想在可读回答之外同时看到结构化 claim / evidence 摘要，可以这样运行：
+
+```bash
+python -m drugclaw run --query "What does imatinib target?" --show-evidence
+```
+
 ## 已实现技能
 
 | 类别 | 技能 |
 | --- | --- |
-| DTI (10) | ChEMBL, BindingDB, DGIdb, Open Targets Platform, TTD, STITCH, TarKG, GDKD, Molecular Targets, Molecular Targets Data |
-| ADR (4) | FAERS, SIDER, nSIDES, ADReCS |
-| 药物知识库 (8) | UniD3, DrugBank, IUPHAR/BPS, DrugCentral, CPIC, PharmKG, WHO Essential Medicines List, FDA Orange Book |
-| 药物机制 (1) | DRUGMECHDB |
-| 药品标签 (3) | openFDA Human Drug, DailyMed, MedlinePlus Drug Info |
-| 药物本体 (4) | RxNorm, ChEBI, ATC/DDD, NDF-RT |
-| 药物重定位 (6) | RepoDB, DRKG, OREGANO, Drug Repurposing Hub, DrugRepoBank, RepurposeDrugs |
-| 药物基因组学 (1) | PharmGKB |
-| DDI (3) | MecDDI, DDInter, KEGG Drug |
-| 药物毒性 (4) | UniTox, LiverTox, DILIrank, DILI |
-| 药物组合 (2) | DrugCombDB, DrugComb |
-| 药物分子性质 (1) | GDSC |
-| 药物-疾病 (1) | SemaTyP |
+| DTI | ChEMBL, BindingDB, DGIdb, Open Targets Platform, TTD, STITCH, TarKG, GDKD, Molecular Targets, Molecular Targets Data |
+| ADR | FAERS, SIDER, nSIDES, ADReCS |
+| 药物知识库 | UniD3, DrugBank, IUPHAR/BPS, DrugCentral, CPIC, PharmKG, WHO Essential Medicines List, FDA Orange Book |
+| 药物机制 | DRUGMECHDB |
+| 药品标签 | openFDA Human Drug, DailyMed, MedlinePlus Drug Info |
+| 药物本体 | RxNorm, ChEBI, ATC/DDD, NDF-RT |
+| 药物重定位 | RepoDB, DRKG, OREGANO, Drug Repurposing Hub, DrugRepoBank, RepurposeDrugs |
+| 药物基因组学 | PharmGKB |
+| DDI | MecDDI, DDInter, KEGG Drug |
+| 药物毒性 | UniTox, LiverTox, DILIrank, DILI |
+| 药物组合 | DrugCombDB, DrugComb |
+| 药物分子性质 | GDSC |
+| 药物-疾病 | SemaTyP |
 | 患者评价 (2) | WebMD Drug Reviews, Drug Reviews (Drugs.com) |
 | 药物 NLP (7) | DDI Corpus 2013, DrugProt, ADE Corpus, CADEC, PsyTAR, TAC 2017 ADR, PHEE |
 

@@ -1,7 +1,11 @@
 """
 Responder Agent - Generates intermediate answers based on current evidence
 """
+from collections import defaultdict
 from typing import List, Dict, Any
+
+from .claim_assessment import ClaimAssessment, assess_claims
+from .evidence import ClaimSummary, FinalAnswer, score_answer_confidence, score_claim_confidence
 from .models import AgentState, EvidencePath
 from .llm_client import LLMClient
 
@@ -16,7 +20,7 @@ class ResponderAgent:
     
     def get_system_prompt(self) -> str:
         """System prompt for the responder agent"""
-        return """You are the Responder Agent of DrugClaw — a drug-specialized agentic RAG system. You synthesize evidence retrieved from 68 curated drug knowledge resources to generate precise, drug-centric answers.
+        return """You are the Responder Agent of DrugClaw — a drug-specialized agentic RAG system. You synthesize evidence retrieved from the current runtime resource registry to generate precise, drug-centric answers.
 
 Your role is to:
 1. Synthesize drug knowledge evidence from multiple knowledge graph paths and sources
@@ -105,42 +109,27 @@ Directly answer the query. Use a table if comparing multiple items:
 """
     
     def execute(self, state: AgentState) -> AgentState:
-        """
-        Execute response generation
-        
-        Args:
-            state: Current agent state
-            
-        Returns:
-            Updated agent state with intermediate answer
-        """
         print(f"\n[Responder Agent] Iteration {state.iteration}")
-        
-        # Get top paths
-        top_paths = state.ranked_paths[:10]  # Use top 10 paths
-        
+        if state.evidence_items:
+            self._respond_from_evidence(state)
+            print(f"[Responder Agent] Structured answer ({len(state.current_answer)} chars)")
+            return state
+
+        top_paths = state.ranked_paths[:10]
         if not top_paths:
             state.current_answer = (
                 "Insufficient evidence found to answer the query. "
                 "Additional retrieval needed."
             )
             return state
-        
-        # Convert paths to strings
+
         path_strs = [self._format_path_for_synthesis(path) for path in top_paths]
-        
-        # Generate intermediate answer
-        answer = self._generate_answer(
+        state.current_answer = self._generate_answer(
             state.original_query,
             path_strs,
             state.iteration
         )
-        
-        # Update state
-        state.current_answer = answer
-        
-        print(f"[Responder Agent] Generated answer ({len(answer)} chars)")
-        
+        print(f"[Responder Agent] Generated answer ({len(state.current_answer)} chars)")
         return state
     
     def _format_path_for_synthesis(self, path: EvidencePath) -> str:
@@ -197,6 +186,11 @@ Directly answer the query. Use a table if comparing multiple items:
         - Issues a single LLM call to produce the final answer
         """
         print(f"\n[Responder Agent] Simple mode — direct synthesis")
+
+        if state.evidence_items:
+            self._respond_from_evidence(state)
+            print(f"[Responder Agent] Simple structured answer ({len(state.current_answer)} chars)")
+            return state
 
         # Prefer the new free-form retrieved_text (from Code Agent)
         retrieved_text = getattr(state, "retrieved_text", "")
@@ -272,3 +266,173 @@ Formatting requirements:
 
         print(f"[Responder Agent] Simple answer ({len(state.current_answer)} chars)")
         return state
+
+    def _respond_from_evidence(self, state: AgentState) -> None:
+        final_answer = self._build_final_answer(
+            state.original_query,
+            state.evidence_items,
+            claim_assessments=state.claim_assessments,
+        )
+        state.final_answer_structured = final_answer
+        state.current_answer = final_answer.answer_text
+
+    def _build_final_answer(
+        self,
+        query: str,
+        evidence_items,
+        claim_assessments: List[ClaimAssessment] | None = None,
+    ) -> FinalAnswer:
+        if not evidence_items:
+            return FinalAnswer(
+                answer_text=(
+                    "Insufficient evidence found to answer the query.\n\n"
+                    "Limitations:\n- No structured evidence items were available."
+                ),
+                summary_confidence=0.0,
+                key_claims=[],
+                evidence_items=[],
+                citations=[],
+                limitations=["No structured evidence items were available."],
+                warnings=["Insufficient evidence."],
+            )
+
+        assessments = list(claim_assessments or [])
+        if not assessments:
+            assessments = assess_claims(evidence_items)
+
+        claims = self._summarize_claims(evidence_items, assessments)
+        warnings = self._build_warnings(assessments, claims, evidence_items)
+        limitations = self._build_limitations(assessments, claims, evidence_items)
+        citations = self._build_citations(evidence_items)
+        answer_text = self._render_answer_text(query, claims, warnings, limitations)
+
+        return FinalAnswer(
+            answer_text=answer_text,
+            summary_confidence=score_answer_confidence(claims),
+            key_claims=claims,
+            evidence_items=list(evidence_items),
+            citations=citations,
+            limitations=limitations,
+            warnings=warnings,
+        )
+
+    @staticmethod
+    def _summarize_claims(
+        evidence_items,
+        assessments: List[ClaimAssessment],
+    ) -> List[ClaimSummary]:
+        grouped: Dict[str, List[Any]] = defaultdict(list)
+        for item in evidence_items:
+            grouped[item.claim].append(item)
+
+        summaries: List[ClaimSummary] = []
+        assessment_by_claim = {assessment.claim: assessment for assessment in assessments}
+        for claim, items in grouped.items():
+            assessment = assessment_by_claim.get(claim)
+            confidence = (
+                assessment.confidence if assessment is not None
+                else score_claim_confidence(items)
+            )
+            citations = [
+                f"[{item.evidence_id}] {item.source_skill} ({item.source_locator})"
+                for item in items
+            ]
+            evidence_ids = (
+                assessment.supporting_evidence_ids + assessment.contradicting_evidence_ids
+                if assessment is not None
+                else [item.evidence_id for item in items]
+            )
+            summaries.append(
+                ClaimSummary(
+                    claim=claim,
+                    confidence=confidence,
+                    evidence_ids=evidence_ids,
+                    citations=citations,
+                )
+            )
+        return sorted(summaries, key=lambda summary: summary.confidence, reverse=True)
+
+    @staticmethod
+    def _build_warnings(
+        assessments: List[ClaimAssessment],
+        claims: List[ClaimSummary],
+        evidence_items,
+    ) -> List[str]:
+        warnings: List[str] = []
+        for assessment in assessments:
+            if assessment.verdict in {"uncertain", "contradicted"}:
+                warnings.append(f"Evidence conflict detected for claim: {assessment.claim}")
+
+        items_by_claim: Dict[str, List[Any]] = defaultdict(list)
+        for item in evidence_items:
+            items_by_claim[item.claim].append(item)
+
+        if not warnings and len(claims) == 1 and claims[0].confidence < 0.45:
+            warnings.append("Evidence is too sparse to support a confident conclusion.")
+        return warnings
+
+    @staticmethod
+    def _build_limitations(
+        assessments: List[ClaimAssessment],
+        claims: List[ClaimSummary],
+        evidence_items,
+    ) -> List[str]:
+        limitations: List[str] = []
+        for assessment in assessments:
+            limitations.extend(assessment.limitations)
+
+        items_by_claim: Dict[str, List[Any]] = defaultdict(list)
+        for item in evidence_items:
+            items_by_claim[item.claim].append(item)
+
+        for claim in claims:
+            claim_items = items_by_claim[claim.claim]
+            unique_sources = {item.source_skill for item in claim_items}
+            if len(unique_sources) == 1 and not any(
+                claim.claim in limitation for limitation in limitations
+            ):
+                limitations.append(f"Claim relies on a single source: {claim.claim}")
+            if all(item.evidence_kind == "model_prediction" for item in claim_items):
+                limitations.append(f"Claim is supported only by predictive evidence: {claim.claim}")
+        return limitations
+
+    @staticmethod
+    def _build_citations(evidence_items) -> List[str]:
+        citations = []
+        seen = set()
+        for item in evidence_items:
+            citation = f"[{item.evidence_id}] {item.source_skill} — {item.source_locator}"
+            if citation not in seen:
+                seen.add(citation)
+                citations.append(citation)
+        return citations
+
+    @staticmethod
+    def _render_answer_text(
+        query: str,
+        claims: List[ClaimSummary],
+        warnings: List[str],
+        limitations: List[str],
+    ) -> str:
+        if not claims:
+            return (
+                f"Query: {query}\n\n"
+                "Insufficient evidence found to answer the query."
+            )
+
+        lines = [f"Query: {query}", "", "Key Claims:"]
+        for claim in claims[:5]:
+            lines.append(
+                f"- {claim.claim} "
+                f"(confidence {claim.confidence:.2f}; evidence {', '.join(claim.evidence_ids)})"
+            )
+
+        if warnings:
+            lines.extend(["", "Warnings:"])
+            lines.extend(f"- {warning}" for warning in warnings)
+
+        if limitations:
+            lines.extend(["", "Limitations:"])
+            lines.extend(f"- {limitation}" for limitation in limitations)
+
+        return "\n".join(lines)
