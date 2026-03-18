@@ -1,6 +1,7 @@
 """
 Responder Agent - Generates intermediate answers based on current evidence
 """
+import re
 from collections import defaultdict
 from typing import List, Dict, Any
 
@@ -371,25 +372,70 @@ Formatting requirements:
                 warnings=["Insufficient evidence."],
             )
 
+        filtered_items = list(evidence_items)
+        if self._is_target_lookup_query(query):
+            filtered_items = self._filter_target_evidence_items(filtered_items) or filtered_items
+
         assessments = list(claim_assessments or [])
         if not assessments:
-            assessments = assess_claims(evidence_items)
+            assessments = assess_claims(filtered_items)
+        else:
+            allowed_claims = {item.claim for item in filtered_items}
+            assessments = [
+                assessment for assessment in assessments
+                if assessment.claim in allowed_claims
+            ]
 
-        claims = self._summarize_claims(evidence_items, assessments)
-        warnings = self._build_warnings(assessments, claims, evidence_items)
-        limitations = self._build_limitations(assessments, claims, evidence_items)
-        citations = self._build_citations(evidence_items)
-        answer_text = self._render_answer_text(query, claims, warnings, limitations)
+        claims = (
+            self._summarize_target_claims(query, filtered_items, assessments)
+            if self._is_target_lookup_query(query)
+            else self._summarize_claims(filtered_items, assessments)
+        )
+        warnings = self._build_warnings(assessments, claims, filtered_items)
+        limitations = self._build_limitations(assessments, claims, filtered_items)
+        citations = self._build_citations(filtered_items)
+        answer_text = (
+            self._render_target_answer(query, claims, warnings, limitations)
+            if self._is_target_lookup_query(query)
+            else self._render_answer_text(query, claims, warnings, limitations)
+        )
 
         return FinalAnswer(
             answer_text=answer_text,
             summary_confidence=score_answer_confidence(claims),
             key_claims=claims,
-            evidence_items=list(evidence_items),
+            evidence_items=list(filtered_items),
             citations=citations,
             limitations=limitations,
             warnings=warnings,
         )
+
+    @staticmethod
+    def _is_target_lookup_query(query: str) -> bool:
+        lowered = (query or "").lower()
+        return "target" in lowered
+
+    def _filter_target_evidence_items(self, evidence_items) -> List[Any]:
+        filtered = []
+        for item in evidence_items:
+            relationship = str(item.metadata.get("relationship", "")).lower()
+            target_entity = str(item.metadata.get("target_entity", "")).strip() or self._extract_target_label(item)
+            target_type = str(item.metadata.get("target_type", "")).lower()
+            claim_lower = item.claim.lower()
+
+            if relationship in {"search_hit", "drug_lookup", "disease_lookup", "target_info"}:
+                continue
+            if any(noise in claim_lower for noise in ("search_hit", "unchecked", "no relevant target")):
+                continue
+            if target_type in {"cell_line", "disease", "drug_info", "disease_info", "unknown"}:
+                continue
+            if target_entity and self._looks_like_cell_line(target_entity):
+                continue
+            if relationship and "activity" not in relationship and "target" not in relationship and "bind" not in relationship:
+                continue
+
+            filtered.append(item)
+        return filtered
 
     @staticmethod
     def _summarize_claims(
@@ -421,6 +467,56 @@ Formatting requirements:
                 ClaimSummary(
                     claim=claim,
                     confidence=confidence,
+                    evidence_ids=evidence_ids,
+                    citations=citations,
+                )
+            )
+        return sorted(summaries, key=lambda summary: summary.confidence, reverse=True)
+
+    def _summarize_target_claims(
+        self,
+        query: str,
+        evidence_items,
+        assessments: List[ClaimAssessment],
+    ) -> List[ClaimSummary]:
+        grouped: Dict[str, List[Any]] = defaultdict(list)
+        for item in evidence_items:
+            target_label = self._extract_target_label(item)
+            if target_label:
+                grouped[self._canonical_target_key(target_label)].append(item)
+
+        if not grouped:
+            return self._summarize_claims(evidence_items, assessments)
+
+        drug_name = self._extract_primary_drug_name(query, evidence_items)
+        assessment_by_claim = {assessment.claim: assessment for assessment in assessments}
+        summaries: List[ClaimSummary] = []
+        for _, items in grouped.items():
+            label = self._choose_target_label(items)
+            evidence_ids: List[str] = []
+            citations: List[str] = []
+            claim_confidences: List[float] = []
+            seen_ids = set()
+            for item in items:
+                assessment = assessment_by_claim.get(item.claim)
+                claim_confidences.append(
+                    assessment.confidence if assessment is not None else score_claim_confidence([item])
+                )
+                for evidence_id in (
+                    assessment.supporting_evidence_ids + assessment.contradicting_evidence_ids
+                    if assessment is not None
+                    else [item.evidence_id]
+                ):
+                    if evidence_id not in seen_ids:
+                        seen_ids.add(evidence_id)
+                        evidence_ids.append(evidence_id)
+                citation = f"[{item.evidence_id}] {item.source_skill} ({item.source_locator})"
+                if citation not in citations:
+                    citations.append(citation)
+            summaries.append(
+                ClaimSummary(
+                    claim=f"{drug_name} targets {label}.",
+                    confidence=max(claim_confidences) if claim_confidences else 0.0,
                     evidence_ids=evidence_ids,
                     citations=citations,
                 )
@@ -462,6 +558,8 @@ Formatting requirements:
 
         for claim in claims:
             claim_items = items_by_claim[claim.claim]
+            if not claim_items:
+                continue
             unique_sources = {item.source_skill for item in claim_items}
             if len(unique_sources) == 1 and not any(
                 claim.claim in limitation for limitation in limitations
@@ -469,7 +567,7 @@ Formatting requirements:
                 limitations.append(f"Claim relies on a single source: {claim.claim}")
             if all(item.evidence_kind == "model_prediction" for item in claim_items):
                 limitations.append(f"Claim is supported only by predictive evidence: {claim.claim}")
-        return limitations
+        return ResponderAgent._dedupe_preserve_order(limitations)
 
     @staticmethod
     def _build_citations(evidence_items) -> List[str]:
@@ -511,3 +609,93 @@ Formatting requirements:
             lines.extend(f"- {limitation}" for limitation in limitations)
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _render_target_answer(
+        query: str,
+        claims: List[ClaimSummary],
+        warnings: List[str],
+        limitations: List[str],
+    ) -> str:
+        if not claims:
+            return (
+                f"Query: {query}\n\n"
+                "Insufficient evidence found to answer the query."
+            )
+
+        lines = [f"Query: {query}", "", "Known Targets:"]
+        for claim in claims[:8]:
+            target_label = claim.claim.replace(" targets ", " -> ").rstrip(".")
+            lines.append(
+                f"- {target_label} "
+                f"(confidence {claim.confidence:.2f}; evidence {', '.join(claim.evidence_ids[:4])})"
+            )
+
+        if warnings:
+            lines.extend(["", "Warnings:"])
+            lines.extend(f"- {warning}" for warning in warnings[:5])
+
+        if limitations:
+            lines.extend(["", "Limitations:"])
+            lines.extend(f"- {limitation}" for limitation in limitations[:8])
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extract_target_label(item: Any) -> str:
+        target_label = str(item.metadata.get("target_entity", "")).strip()
+        if target_label:
+            return target_label
+        claim = item.claim.strip().rstrip(".")
+        for token in (" targets ", " linked_target ", " has_ic50_activity ", " has_ki_activity ", " has_kd_activity ", " has_ec50_activity "):
+            if token in claim:
+                return claim.split(token, 1)[1].strip()
+        return ""
+
+    @staticmethod
+    def _choose_target_label(items: List[Any]) -> str:
+        labels = [ResponderAgent._extract_target_label(item) for item in items]
+        labels = [label for label in labels if label]
+        if not labels:
+            return "unknown target"
+        return max(labels, key=len)
+
+    @staticmethod
+    def _canonical_target_key(label: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9]+", " ", label.lower()).strip()
+        return cleaned
+
+    @staticmethod
+    def _looks_like_cell_line(label: str) -> bool:
+        normalized = label.strip().upper().replace("-", "")
+        return bool(re.fullmatch(r"[A-Z]{1,5}\d{2,}", normalized))
+
+    @staticmethod
+    def _extract_primary_drug_name(query: str, evidence_items) -> str:
+        for item in evidence_items:
+            source_entity = str(item.metadata.get("source_entity", "")).strip()
+            if source_entity:
+                return source_entity
+            claim = str(getattr(item, "claim", "")).strip()
+            if " targets " in claim:
+                return claim.split(" targets ", 1)[0].strip() or "This drug"
+        lowered = (query or "").lower()
+        match = re.search(r"targets?\s+of\s+([a-z0-9\-]+)", lowered)
+        if match:
+            return match.group(1)
+        match = re.search(r"does\s+([a-z0-9\-]+)\s+target", lowered)
+        if match:
+            return match.group(1)
+        return "This drug"
+
+    @staticmethod
+    def _dedupe_preserve_order(lines: List[str]) -> List[str]:
+        deduped: List[str] = []
+        seen = set()
+        for line in lines:
+            normalized = line.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped

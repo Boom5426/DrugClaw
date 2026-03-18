@@ -72,7 +72,7 @@ cp api_keys.example.json api_keys.json
   "api_key": "your-api-key-here",
   "base_url": "https://your-endpoint.com/v1",
   "model": "gpt-4o",
-  "max_tokens": 2000,
+  "max_tokens": 20000,
   "timeout": 60,
   "temperature": 0.7
 }
@@ -87,22 +87,6 @@ cp api_keys.example.json api_keys.json
 | Ollama | `http://localhost:11434/v1` | `llama3.1`, `qwen2.5` |
 | Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-70B-Instruct-Turbo` |
 
-<!-- 也兼容旧版 `OPENAI_API_KEY` 字段和 `navigator_api_keys.json` 文件名。
-
-当前版本会按以下顺序查找配置文件：
-
-- 环境变量 `DRUGCLAW_KEY_FILE`
-- 仓库根目录下的 `api_keys.json`
-- 仓库根目录下的 `navigator_api_keys.json`（旧版兼容）
-
-当前推荐使用上面的新格式，但也兼容旧格式：
-
-```json
-{
-  "OPENAI_API_KEY": "your-api-key-here",
-  "base_url": "https://your-endpoint.com/v1"
-}
-``` -->
 
 ### 3. 直接运行官方 CLI Demo
 

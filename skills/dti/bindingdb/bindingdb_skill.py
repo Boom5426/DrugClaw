@@ -143,7 +143,14 @@ class BindingDBSkill(RAGSkill):
                 confidence=0.0,
                 retrieval_score=0.9,
                 timestamp="2026-03-18T00:00:00Z",
-                metadata={"skill_category": self.subcategory},
+                metadata={
+                    "skill_category": self.subcategory,
+                    "source_entity": source_entity,
+                    "relationship": "targets",
+                    "target_entity": target_entity,
+                    "source_type": "drug",
+                    "target_type": "protein",
+                },
             )
             item.confidence = score_evidence_item(item)
             items.append(item)

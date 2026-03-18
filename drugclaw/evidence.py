@@ -164,6 +164,11 @@ def build_evidence_items_for_skill(
             timestamp=timestamp,
             metadata={
                 "skill_category": record.get("skill_category", getattr(skill, "subcategory", "")),
+                "source_entity": source_entity,
+                "relationship": relationship,
+                "target_entity": target_entity,
+                "source_type": record.get("source_type", ""),
+                "target_type": record.get("target_type", ""),
             },
         )
         item.confidence = score_evidence_item(item)

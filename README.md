@@ -88,22 +88,6 @@ Then fill in your real credentials:
 | Ollama | `http://localhost:11434/v1` | `llama3.1`, `qwen2.5` |
 | Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-70B-Instruct-Turbo` |
 
-<!-- DrugClaw also accepts the legacy `OPENAI_API_KEY` field and `navigator_api_keys.json` filename for backward compatibility.
-
-DrugClaw resolves key files in this order:
-
-- `DRUGCLAW_KEY_FILE` environment variable
-- `api_keys.json` in the repository root
-- `navigator_api_keys.json` in the repository root (legacy)
-
-DrugClaw recommends the new format above, but still accepts the legacy format:
-
-```json
-{
-  "OPENAI_API_KEY": "your-api-key-here",
-  "base_url": "https://your-endpoint.com/v1"
-}
-``` -->
 
 ### 3. Run the official CLI demo
 

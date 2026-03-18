@@ -135,3 +135,181 @@ def test_responder_reports_insufficient_evidence_instead_of_hallucinating() -> N
     assert updated.final_answer_structured.summary_confidence == 0.0
     assert "No structured evidence was retrieved" in updated.current_answer
     assert "TTD" in updated.current_answer
+
+
+def test_responder_filters_target_lookup_noise_and_renders_target_summary() -> None:
+    responder = ResponderAgent(_LLMStub())
+    state = AgentState(original_query="What are the known drug targets of imatinib?")
+    state.evidence_items = [
+        EvidenceItem(
+            evidence_id="E1",
+            source_skill="ChEMBL",
+            source_type="database",
+            source_title="ChEMBL activity",
+            source_locator="CHEMBL941",
+            snippet="IMATINIB IC50=12 nM against ABL1",
+            structured_payload={},
+            claim="IMATINIB has_ic50_activity Tyrosine-protein kinase ABL1",
+            evidence_kind="database_record",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.92,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={
+                "relationship": "has_ic50_activity",
+                "source_entity": "IMATINIB",
+                "target_entity": "Tyrosine-protein kinase ABL1",
+                "source_type": "drug",
+                "target_type": "protein",
+            },
+        ),
+        EvidenceItem(
+            evidence_id="E2",
+            source_skill="ChEMBL",
+            source_type="database",
+            source_title="ChEMBL activity",
+            source_locator="CHEMBL941",
+            snippet="IMATINIB IC50=20 nM against KIT",
+            structured_payload={},
+            claim="IMATINIB has_ic50_activity Mast/stem cell growth factor receptor Kit",
+            evidence_kind="database_record",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.89,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={
+                "relationship": "has_ic50_activity",
+                "source_entity": "IMATINIB",
+                "target_entity": "Mast/stem cell growth factor receptor Kit",
+                "source_type": "drug",
+                "target_type": "protein",
+            },
+        ),
+        EvidenceItem(
+            evidence_id="E3",
+            source_skill="Molecular Targets",
+            source_type="database",
+            source_title="search result",
+            source_locator="Molecular Targets",
+            snippet="CCDI: leukemia",
+            structured_payload={},
+            claim="imatinib search_hit leukemia",
+            evidence_kind="database_record",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.40,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={
+                "relationship": "search_hit",
+                "source_entity": "imatinib",
+                "target_entity": "leukemia",
+                "source_type": "query",
+                "target_type": "disease",
+            },
+        ),
+        EvidenceItem(
+            evidence_id="E4",
+            source_skill="ChEMBL",
+            source_type="database",
+            source_title="ChEMBL activity",
+            source_locator="CHEMBL941",
+            snippet="IMATINIB ratio=Unchecked",
+            structured_payload={},
+            claim="IMATINIB has_ratio_activity Unchecked",
+            evidence_kind="database_record",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.20,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={
+                "relationship": "has_ratio_activity",
+                "source_entity": "IMATINIB",
+                "target_entity": "Unchecked",
+                "source_type": "drug",
+                "target_type": "unknown",
+            },
+        ),
+        EvidenceItem(
+            evidence_id="E5",
+            source_skill="ChEMBL",
+            source_type="database",
+            source_title="ChEMBL activity",
+            source_locator="CHEMBL941",
+            snippet="IMATINIB IC50=200 nM against K562",
+            structured_payload={},
+            claim="IMATINIB has_ic50_activity K562",
+            evidence_kind="database_record",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.30,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={
+                "relationship": "has_ic50_activity",
+                "source_entity": "IMATINIB",
+                "target_entity": "K562",
+                "source_type": "drug",
+                "target_type": "cell_line",
+            },
+        ),
+    ]
+
+    updated = responder.execute_simple(state)
+
+    assert updated.final_answer_structured is not None
+    claims = [claim.claim for claim in updated.final_answer_structured.key_claims]
+    assert any("ABL1" in claim for claim in claims)
+    assert any("Kit" in claim or "KIT" in claim for claim in claims)
+    assert all("search_hit" not in claim for claim in claims)
+    assert all("Unchecked" not in claim for claim in claims)
+    assert all("K562" not in claim for claim in claims)
+    assert "Known Targets" in updated.current_answer
+    assert "leukemia" not in updated.current_answer
+
+
+def test_responder_deduplicates_repeated_limitations() -> None:
+    responder = ResponderAgent(_LLMStub())
+    state = AgentState(original_query="What are the known drug targets of imatinib?")
+    state.evidence_items = [
+        EvidenceItem(
+            evidence_id="E1",
+            source_skill="BindingDB",
+            source_type="database",
+            source_title="BindingDB record",
+            source_locator="PMID:1",
+            snippet="Imatinib binds ABL1.",
+            structured_payload={},
+            claim="Imatinib targets ABL1.",
+            evidence_kind="database_record",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.91,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={},
+        ),
+        EvidenceItem(
+            evidence_id="E2",
+            source_skill="ChEMBL",
+            source_type="database",
+            source_title="ChEMBL record",
+            source_locator="CHEMBL941",
+            snippet="Imatinib binds KIT.",
+            structured_payload={},
+            claim="Imatinib targets KIT.",
+            evidence_kind="database_record",
+            support_direction="supports",
+            confidence=0.0,
+            retrieval_score=0.88,
+            timestamp="2026-03-18T00:00:00Z",
+            metadata={},
+        ),
+    ]
+
+    updated = responder.execute_simple(state)
+
+    assert updated.final_answer_structured is not None
+    single_support_limitations = [
+        limitation
+        for limitation in updated.final_answer_structured.limitations
+        if "single supporting evidence item" in limitation.lower()
+    ]
+    assert len(single_support_limitations) <= 1
