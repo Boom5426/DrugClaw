@@ -4,6 +4,7 @@ Responder Agent - Generates intermediate answers based on current evidence
 from collections import defaultdict
 from typing import List, Dict, Any
 
+from .claim_assessment import ClaimAssessment, assess_claims
 from .evidence import ClaimSummary, FinalAnswer, score_answer_confidence, score_claim_confidence
 from .models import AgentState, EvidencePath
 from .llm_client import LLMClient
@@ -270,6 +271,7 @@ Formatting requirements:
         final_answer = self._build_final_answer(
             state.original_query,
             state.evidence_items,
+            claim_assessments=state.claim_assessments,
         )
         state.final_answer_structured = final_answer
         state.current_answer = final_answer.answer_text
@@ -278,6 +280,7 @@ Formatting requirements:
         self,
         query: str,
         evidence_items,
+        claim_assessments: List[ClaimAssessment] | None = None,
     ) -> FinalAnswer:
         if not evidence_items:
             return FinalAnswer(
@@ -293,9 +296,13 @@ Formatting requirements:
                 warnings=["Insufficient evidence."],
             )
 
-        claims = self._summarize_claims(evidence_items)
-        warnings = self._build_warnings(claims, evidence_items)
-        limitations = self._build_limitations(claims, evidence_items)
+        assessments = list(claim_assessments or [])
+        if not assessments:
+            assessments = assess_claims(evidence_items)
+
+        claims = self._summarize_claims(evidence_items, assessments)
+        warnings = self._build_warnings(assessments, claims, evidence_items)
+        limitations = self._build_limitations(assessments, claims, evidence_items)
         citations = self._build_citations(evidence_items)
         answer_text = self._render_answer_text(query, claims, warnings, limitations)
 
@@ -310,46 +317,70 @@ Formatting requirements:
         )
 
     @staticmethod
-    def _summarize_claims(evidence_items) -> List[ClaimSummary]:
+    def _summarize_claims(
+        evidence_items,
+        assessments: List[ClaimAssessment],
+    ) -> List[ClaimSummary]:
         grouped: Dict[str, List[Any]] = defaultdict(list)
         for item in evidence_items:
             grouped[item.claim].append(item)
 
         summaries: List[ClaimSummary] = []
+        assessment_by_claim = {assessment.claim: assessment for assessment in assessments}
         for claim, items in grouped.items():
-            confidence = score_claim_confidence(items)
+            assessment = assessment_by_claim.get(claim)
+            confidence = (
+                assessment.confidence if assessment is not None
+                else score_claim_confidence(items)
+            )
             citations = [
                 f"[{item.evidence_id}] {item.source_skill} ({item.source_locator})"
                 for item in items
             ]
+            evidence_ids = (
+                assessment.supporting_evidence_ids + assessment.contradicting_evidence_ids
+                if assessment is not None
+                else [item.evidence_id for item in items]
+            )
             summaries.append(
                 ClaimSummary(
                     claim=claim,
                     confidence=confidence,
-                    evidence_ids=[item.evidence_id for item in items],
+                    evidence_ids=evidence_ids,
                     citations=citations,
                 )
             )
         return sorted(summaries, key=lambda summary: summary.confidence, reverse=True)
 
     @staticmethod
-    def _build_warnings(claims: List[ClaimSummary], evidence_items) -> List[str]:
+    def _build_warnings(
+        assessments: List[ClaimAssessment],
+        claims: List[ClaimSummary],
+        evidence_items,
+    ) -> List[str]:
         warnings: List[str] = []
+        for assessment in assessments:
+            if assessment.verdict in {"uncertain", "contradicted"}:
+                warnings.append(f"Evidence conflict detected for claim: {assessment.claim}")
+
         items_by_claim: Dict[str, List[Any]] = defaultdict(list)
         for item in evidence_items:
             items_by_claim[item.claim].append(item)
 
-        for claim in claims:
-            claim_items = items_by_claim[claim.claim]
-            if any(item.support_direction == "contradicts" for item in claim_items):
-                warnings.append(f"Evidence conflict detected for claim: {claim.claim}")
         if not warnings and len(claims) == 1 and claims[0].confidence < 0.45:
             warnings.append("Evidence is too sparse to support a confident conclusion.")
         return warnings
 
     @staticmethod
-    def _build_limitations(claims: List[ClaimSummary], evidence_items) -> List[str]:
+    def _build_limitations(
+        assessments: List[ClaimAssessment],
+        claims: List[ClaimSummary],
+        evidence_items,
+    ) -> List[str]:
         limitations: List[str] = []
+        for assessment in assessments:
+            limitations.extend(assessment.limitations)
+
         items_by_claim: Dict[str, List[Any]] = defaultdict(list)
         for item in evidence_items:
             items_by_claim[item.claim].append(item)
@@ -357,7 +388,9 @@ Formatting requirements:
         for claim in claims:
             claim_items = items_by_claim[claim.claim]
             unique_sources = {item.source_skill for item in claim_items}
-            if len(unique_sources) == 1:
+            if len(unique_sources) == 1 and not any(
+                claim.claim in limitation for limitation in limitations
+            ):
                 limitations.append(f"Claim relies on a single source: {claim.claim}")
             if all(item.evidence_kind == "model_prediction" for item in claim_items):
                 limitations.append(f"Claim is supported only by predictive evidence: {claim.claim}")

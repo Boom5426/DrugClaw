@@ -43,6 +43,7 @@ from .agent_reranker import RerankerAgent
 from .agent_responder import ResponderAgent
 from .agent_reflector import ReflectorAgent
 from .agent_websearch import WebSearchAgent
+from .claim_assessment import assess_claims
 from .query_logger import QueryLogger, QuerySession
 from .response_formatter import wrap_answer_card
 from .resource_registry import build_resource_registry
@@ -239,6 +240,8 @@ class DrugClawSystem:
 
     def _assess_claims_node(self, state: AgentState) -> AgentState:
         self._record_stage(state, "ASSESS_CLAIMS")
+        if state.evidence_items:
+            state.claim_assessments = assess_claims(state.evidence_items)
         return state
 
     def _respond_node(self, state: AgentState) -> AgentState:
