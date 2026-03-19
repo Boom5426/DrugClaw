@@ -25,6 +25,7 @@ from .query_plan import (
 from .skills.registry import SkillRegistry
 from .agent_coder import CoderAgent
 from .evidence import build_evidence_items_for_skill
+from .entity_resolver import EntityResolver
 
 
 class RetrieverAgent:
@@ -41,11 +42,16 @@ class RetrieverAgent:
         skill_registry: SkillRegistry,
         coder_agent: Optional[CoderAgent] = None,
         resource_registry=None,
+        entity_resolver: Optional[EntityResolver] = None,
     ):
         self.llm = llm_client
         self.skill_registry = skill_registry
         self.coder = coder_agent or CoderAgent(llm_client, skill_registry)
         self.resource_registry = resource_registry
+        self.entity_resolver = entity_resolver or EntityResolver(
+            skill_registry=skill_registry,
+            llm_client=llm_client,
+        )
 
     # ------------------------------------------------------------------
     # Prompt builders
@@ -222,6 +228,15 @@ Provide your plan in JSON format:
 
         # Normalize entities for Code Agent
         entities = self._normalize_entities_for_coder(key_entities)
+
+        # Fuzzy-resolve entities: expand with close matches / LLM variants
+        if entities:
+            entities = self.entity_resolver.resolve(
+                entities,
+                skill_names=selected_skills,
+            )
+            print(f"[Retriever Agent] Resolved entities: {entities}")
+
         execution_strategy = self._select_execution_strategy(state)
 
         # Delegate to Code Agent
