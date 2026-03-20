@@ -37,9 +37,21 @@ Respond with JSON: {{"answer": "adverse_event"}} or {{"answer": "therapeutic_out
 """
 
 
+def _load_json_or_jsonl(path: Path) -> list[dict]:
+    """Load a JSON array or a JSONL (one JSON object per line) file."""
+    text = path.read_text(encoding="utf-8").strip()
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            return data
+        return [data]
+    except json.JSONDecodeError:
+        # Fall back to JSONL (one JSON object per line)
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
 def load_data(max_samples: int = 0) -> list[dict]:
-    with open(DATA_PATH, encoding="utf-8") as f:
-        raw = json.load(f)
+    raw = _load_json_or_jsonl(DATA_PATH)
     rows = []
     for r in raw:
         rows.append({
