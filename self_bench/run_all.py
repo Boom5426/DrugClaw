@@ -29,10 +29,21 @@ ALL_DATASETS = [
 ]
 
 
-def run_one(dataset: str, key_file: str | None, max_samples: int) -> dict:
+def run_one(
+    dataset: str,
+    key_file: str | None,
+    max_samples: int,
+    maskself: bool | None = None,
+    log_dir: str | None = None,
+) -> dict:
     """Import and run a single dataset benchmark, return its results dict."""
     mod = importlib.import_module(f"self_bench.{dataset}.bench")
-    return mod.run(key_file=key_file, max_samples=max_samples)
+    return mod.run(
+        key_file=key_file,
+        max_samples=max_samples,
+        maskself=maskself,
+        log_dir=log_dir,
+    )
 
 
 def main():
@@ -53,7 +64,24 @@ def main():
         "--output", type=str, default=None,
         help="Path to write JSON results (default: stdout summary only)",
     )
+    parser.add_argument(
+        "--maskself", type=str, default=None, choices=["true", "false"],
+        help=(
+            "Enable DrugClaw RAG system for benchmark. "
+            "'true'=mask self resource (test other resources), "
+            "'false'=include self (test retrieval). "
+            "Omit for direct LLM classification."
+        ),
+    )
+    parser.add_argument(
+        "--log-dir", type=str, default=None,
+        help="Directory to save per-sample LLM input/output logs",
+    )
     args = parser.parse_args()
+
+    maskself_val: bool | None = None
+    if args.maskself is not None:
+        maskself_val = args.maskself.lower() == "true"
 
     all_results = {}
     for ds in args.datasets:
@@ -65,7 +93,7 @@ def main():
         print(f"{'='*60}")
         t0 = time.time()
         try:
-            result = run_one(ds, args.key_file, args.max_samples)
+            result = run_one(ds, args.key_file, args.max_samples, maskself_val, args.log_dir)
             result["elapsed_sec"] = round(time.time() - t0, 1)
             all_results[ds] = result
             print(f"  Accuracy: {result.get('accuracy', 'N/A')}")

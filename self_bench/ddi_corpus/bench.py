@@ -55,22 +55,24 @@ def load_data(max_samples: int = 0) -> list[dict]:
     return rows
 
 
-def run(key_file: str | None = None, max_samples: int = 0) -> dict:
-    from self_bench.bench_utils import make_llm, llm_predict, extract_answer, compute_metrics
+def run(
+    key_file: str | None = None,
+    max_samples: int = 0,
+    maskself: bool | None = None,
+    log_dir: str | None = None,
+) -> dict:
+    from self_bench.bench_utils import run_classification_bench
 
-    llm, _ = make_llm(key_file)
-    data = load_data(max_samples)
-    if not data:
-        return {"error": "No data loaded", "total": 0}
-
-    golds, preds = [], []
-    for sample in data:
-        prompt = USER_TEMPLATE.format(
-            drug1=sample["drug1"], drug2=sample["drug2"], sentence=sample["sentence"],
-        )
-        resp = llm_predict(llm, SYSTEM_PROMPT, prompt)
-        pred = extract_answer(resp, LABELS) or "int"
-        golds.append(sample["gold"])
-        preds.append(pred)
-
-    return compute_metrics(golds, preds, LABELS)
+    return run_classification_bench(
+        dataset_name="ddi_corpus",
+        labels=LABELS,
+        default_label="int",
+        system_prompt=SYSTEM_PROMPT,
+        samples=load_data(max_samples),
+        format_prompt=lambda s: USER_TEMPLATE.format(
+            drug1=s["drug1"], drug2=s["drug2"], sentence=s["sentence"],
+        ),
+        key_file=key_file,
+        maskself=maskself,
+        log_dir=log_dir,
+    )

@@ -5,6 +5,7 @@ navigator_api_keys.json
 build/
 drugclaw.egg-info/
 query_logs/
+self_bench_logs/
 .worktrees/
 resources_metadata/**
 # Only commit curated minimal fixtures needed by examples/tests.

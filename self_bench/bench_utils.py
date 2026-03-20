@@ -3,14 +3,16 @@ Shared utilities for self-bench scripts:
   - LLM client construction
   - Answer extraction helpers
   - Metric computation
+  - DrugClaw system integration (maskself / RAG mode)
+  - Bench logger (per-sample LLM input/output persistence)
 """
 
 import json
 import re
 import sys
-from collections import Counter
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 # ── LLM helpers ─────────────────────────────────────────────────────────
@@ -134,3 +136,185 @@ def compute_metrics(
         "f1_macro": macro_f1,
         "per_class": per_class,
     }
+
+
+# ── Dataset → Skill name mapping ──────────────────────────────────────
+
+DATASET_SKILL_MAP: dict[str, str] = {
+    "ade_corpus": "ADE Corpus",
+    "ddi_corpus": "DDI Corpus 2013",
+    "drugprot": "DrugProt",
+    "phee": "PHEE",
+    "dilirank": "DILIrank",
+    "n2c2_2018": "n2c2 2018 Track 2",
+    "psytar": "PsyTAR",
+}
+
+
+# ── DrugClaw system helpers ────────────────────────────────────────────
+
+def make_system(key_file: str | None = None):
+    """Return a DrugClawSystem instance for RAG-mode benchmarking."""
+    repo_root = Path(__file__).resolve().parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from drugclaw.config import Config
+    from drugclaw.main_system import DrugClawSystem
+
+    cfg = Config(key_file=key_file)
+    return DrugClawSystem(cfg, enable_logging=False)
+
+
+def system_predict(
+    system, query: str, dataset: str, maskself: bool
+) -> tuple[str, dict]:
+    """
+    Query the DrugClaw RAG system.  Returns (answer_text, full_result_dict).
+
+    maskself=True  → exclude the dataset's own skill from retrieval
+    maskself=False → allow all resources including self
+    """
+    resource_filter = None
+    if maskself:
+        self_skill = DATASET_SKILL_MAP.get(dataset)
+        if self_skill:
+            resource_filter = [
+                s.name
+                for s in system.skill_registry.get_registered_skills()
+                if s.name != self_skill
+            ]
+
+    result = system.query(
+        query,
+        thinking_mode="simple",
+        resource_filter=resource_filter,
+        verbose=False,
+    )
+    return result.get("answer", ""), result
+
+
+# ── Bench logger ───────────────────────────────────────────────────────
+
+class BenchLogger:
+    """
+    Per-run logger that persists every sample's LLM input/output,
+    analogous to QueryLogger but tailored for benchmark runs.
+
+    Directory layout:
+        <log_dir>/<dataset>_<mode>_<timestamp>/
+            config.json          # run configuration
+            results.json         # final metrics (written at end)
+            sample_0000.json     # per-sample record
+            sample_0001.json
+            ...
+    """
+
+    def __init__(self, log_dir: str, dataset: str, maskself: bool | None):
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        mode = (
+            "masked" if maskself is True
+            else ("rag" if maskself is False else "direct")
+        )
+        self.run_dir = Path(log_dir) / f"{dataset}_{mode}_{ts}"
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self._count = 0
+
+        (self.run_dir / "config.json").write_text(
+            json.dumps(
+                {"dataset": dataset, "maskself": maskself, "mode": mode, "timestamp": ts},
+                indent=2, ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    def log_sample(
+        self,
+        idx: int,
+        input_data: dict,
+        raw_response: str,
+        extracted: str | None,
+        gold: str,
+    ):
+        record = {
+            "sample_id": idx,
+            "input": input_data,
+            "output": {
+                "raw_response": raw_response,
+                "extracted_answer": extracted,
+                "gold_label": gold,
+                "correct": extracted == gold,
+            },
+        }
+        self._count += 1
+        (self.run_dir / f"sample_{idx:04d}.json").write_text(
+            json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def save_results(self, metrics: dict):
+        (self.run_dir / "results.json").write_text(
+            json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"[BenchLogger] {self._count} samples logged → {self.run_dir}")
+
+
+# ── Generic classification bench runner ────────────────────────────────
+
+def run_classification_bench(
+    *,
+    dataset_name: str,
+    labels: list[str],
+    default_label: str,
+    system_prompt: str,
+    samples: list[dict],
+    format_prompt: Callable[[dict], str],
+    key_file: str | None = None,
+    maskself: bool | None = None,
+    log_dir: str | None = None,
+) -> dict:
+    """
+    Run a classification benchmark with optional DrugClaw RAG and logging.
+
+    maskself=None  → direct LLM classification (no RAG)
+    maskself=False → DrugClaw RAG with all resources (retrieval test)
+    maskself=True  → DrugClaw RAG with self resource excluded (other-resource test)
+    """
+    if not samples:
+        return {"error": "No data loaded", "total": 0}
+
+    use_system = maskself is not None
+
+    if use_system:
+        system = make_system(key_file)
+    else:
+        llm, _ = make_llm(key_file)
+
+    logger = BenchLogger(log_dir, dataset_name, maskself) if log_dir else None
+
+    golds: list[str] = []
+    preds: list[str] = []
+
+    for i, sample in enumerate(samples):
+        user_prompt = format_prompt(sample)
+
+        if use_system:
+            query = f"{system_prompt}\n\n{user_prompt}"
+            resp, sys_result = system_predict(system, query, dataset_name, maskself)
+            input_data: dict[str, Any] = {"query": query, "maskself": maskself}
+            if sys_result.get("retrieved_text"):
+                input_data["retrieved_context"] = sys_result["retrieved_text"][:2000]
+        else:
+            resp = llm_predict(llm, system_prompt, user_prompt)
+            input_data = {"system_prompt": system_prompt, "user_prompt": user_prompt}
+
+        pred = extract_answer(resp, labels) or default_label
+        golds.append(sample["gold"])
+        preds.append(pred)
+
+        if logger:
+            logger.log_sample(i, input_data, resp, pred, sample["gold"])
+
+    metrics = compute_metrics(golds, preds, labels)
+    if logger:
+        logger.save_results(metrics)
+    return metrics
