@@ -225,6 +225,14 @@ Deployment recommendation for the first serviceized version:
 - use `systemd` or another process supervisor
 - keep the service-side API key private; never expose it to the browser
 
+If you want to expose this service publicly, start with:
+
+- `docs/2026-03-23-DrugClaw-公网部署说明.md`
+- `deploy/nginx/drugclaw.conf`
+- `deploy/systemd/drugclaw.service`
+
+Do not expose port `8000` directly to the public Internet for production use. Keep DrugClaw bound to `127.0.0.1:8000` and publish it through `nginx + HTTPS`.
+
 ### 4. Prepare local resources under `resources_metadata/` for broader coverage
 
 Many skills use `LOCAL_FILE` access mode. Those resources are not required for the first demo, but they improve coverage and unlock skills that depend on local datasets.

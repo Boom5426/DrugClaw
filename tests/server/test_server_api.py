@@ -30,6 +30,14 @@ def test_query_request_validation() -> None:
         QueryRequest(query="What does imatinib target?", mode="bad-mode")
 
 
+def test_query_request_defaults_mode_to_none() -> None:
+    from drugclaw.server_models import QueryRequest
+
+    request = QueryRequest(query="What does imatinib target?")
+
+    assert request.mode is None
+
+
 def test_health_endpoint() -> None:
     from fastapi.testclient import TestClient
 
@@ -93,6 +101,26 @@ def test_query_endpoint() -> None:
     assert body["save_md_report"] is True
 
 
+def test_query_endpoint_uses_runtime_default_mode_when_omitted() -> None:
+    from fastapi.testclient import TestClient
+
+    from drugclaw.server_app import create_app
+
+    runtime = _RuntimeStub(default_mode="web_only")
+    client = TestClient(create_app(runtime=runtime))
+    response = client.post(
+        "/api/query",
+        json={
+            "query": "What are the known drug targets of imatinib?",
+            "resource_filter": ["ChEMBL"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert runtime.calls[0]["mode"] == "web_only"
+    assert response.json()["mode"] == "web_only"
+
+
 def test_query_detail_endpoint() -> None:
     from fastapi.testclient import TestClient
 
@@ -130,11 +158,19 @@ def test_root_serves_chat_page() -> None:
 
 
 class _RuntimeStub:
+    def __init__(self, default_mode: str = "simple"):
+        self.config = type(
+            "_Config",
+            (),
+            {"SERVER_DEFAULT_MODE": default_mode},
+        )()
+        self.calls = []
+
     def health(self):
         return {
             "status": "ok",
             "model": "test-model",
-            "default_mode": "simple",
+            "default_mode": self.config.SERVER_DEFAULT_MODE,
             "active_requests": 0,
         }
 
@@ -146,12 +182,21 @@ class _RuntimeStub:
         }
 
     def run_query(self, query, mode, resource_filter, save_md_report):
+        self.calls.append(
+            {
+                "query": query,
+                "mode": mode,
+                "resource_filter": resource_filter,
+                "save_md_report": save_md_report,
+            }
+        )
         return {
             "success": True,
             "query": query,
             "normalized_query": query,
             "answer": "ok",
             "query_id": "query_1",
+            "mode": mode,
             "resource_filter": resource_filter,
             "save_md_report": save_md_report,
         }

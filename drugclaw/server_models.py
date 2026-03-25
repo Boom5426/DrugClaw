@@ -12,7 +12,7 @@ _ALLOWED_MODES = {mode.value for mode in ThinkingMode}
 
 class QueryRequest(BaseModel):
     query: str
-    mode: str = ThinkingMode.SIMPLE.value
+    mode: str | None = None
     resource_filter: list[str] = Field(default_factory=list)
     save_md_report: bool = False
 
@@ -28,7 +28,9 @@ class QueryRequest(BaseModel):
 
     @field_validator("mode")
     @classmethod
-    def _validate_mode(cls, value: str) -> str:
+    def _validate_mode(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = str(value).strip().lower()
         if normalized not in _ALLOWED_MODES:
             raise ValueError("invalid mode")

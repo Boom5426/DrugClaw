@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -9,17 +11,14 @@ from drugclaw.config import Config
 from drugclaw.models import ThinkingMode
 
 
-def _write_key_file(path: Path) -> None:
-    path.write_text(
-        json.dumps(
-            {
-                "api_key": "",
-                "base_url": "https://example.com/v1",
-                "model": "test-model",
-            }
-        ),
-        encoding="utf-8",
-    )
+def _write_key_file(path: Path, **overrides) -> None:
+    payload = {
+        "api_key": "",
+        "base_url": "https://example.com/v1",
+        "model": "test-model",
+    }
+    payload.update(overrides)
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def test_runtime_rejects_empty_query(tmp_path: Path) -> None:
@@ -281,3 +280,83 @@ def test_runtime_reports_busy_when_concurrency_limit_is_reached(tmp_path: Path) 
             runtime._acquire_slot()
     finally:
         runtime._semaphore.release()
+
+
+def test_runtime_keeps_slot_occupied_until_timed_out_query_finishes(tmp_path: Path) -> None:
+    from drugclaw.service_runtime import DrugClawServiceRuntime
+
+    class _BlockingSystemStub:
+        def __init__(self):
+            self.started = threading.Event()
+            self.finish = threading.Event()
+
+        def query(
+            self,
+            query,
+            thinking_mode,
+            resource_filter,
+            verbose=True,
+            save_md_report=False,
+        ):
+            self.started.set()
+            self.finish.wait(timeout=5)
+            return {
+                "success": True,
+                "query": query,
+                "normalized_query": query,
+                "answer": "ok",
+                "query_id": "query_timeout",
+            }
+
+    class _RegistryStub:
+        def get_resource(self, name):
+            return object()
+
+    key_file = tmp_path / "navigator_api_keys.json"
+    _write_key_file(
+        key_file,
+        server_query_timeout_seconds=1,
+        server_max_concurrency=1,
+    )
+    system = _BlockingSystemStub()
+    runtime = DrugClawServiceRuntime(
+        config=Config(key_file=str(key_file)),
+        system=system,
+        resource_registry=_RegistryStub(),
+    )
+
+    with pytest.raises(RuntimeError, match="timed out"):
+        runtime.run_query(
+            query="What are the known drug targets of imatinib?",
+            mode=ThinkingMode.SIMPLE.value,
+            resource_filter=["ChEMBL"],
+            save_md_report=False,
+        )
+
+    assert system.started.wait(timeout=1) is True
+    assert runtime.health()["active_requests"] == 1
+
+    with pytest.raises(RuntimeError, match="busy"):
+        runtime.run_query(
+            query="What are the known drug targets of imatinib?",
+            mode=ThinkingMode.SIMPLE.value,
+            resource_filter=["ChEMBL"],
+            save_md_report=False,
+        )
+
+    system.finish.set()
+
+    deadline = time.time() + 2
+    while runtime.health()["active_requests"] != 0 and time.time() < deadline:
+        time.sleep(0.01)
+
+    assert runtime.health()["active_requests"] == 0
+
+    result = runtime.run_query(
+        query="What are the known drug targets of imatinib?",
+        mode=ThinkingMode.SIMPLE.value,
+        resource_filter=["ChEMBL"],
+        save_md_report=False,
+    )
+
+    assert result["success"] is True

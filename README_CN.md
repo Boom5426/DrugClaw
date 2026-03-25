@@ -224,6 +224,14 @@ curl -X POST http://127.0.0.1:8000/api/query \
 - 用 `systemd` 或其他守护方式管理进程
 - 服务端保管 API key，不要把 key 下发到浏览器
 
+如果你要把这版服务公开到公网，建议直接参考：
+
+- `docs/2026-03-23-DrugClaw-公网部署说明.md`
+- `deploy/nginx/drugclaw.conf`
+- `deploy/systemd/drugclaw.service`
+
+注意：正式部署不要直接把 `8000` 端口裸暴露到外网，推荐仍然让 DrugClaw 只监听 `127.0.0.1:8000`，再由 `nginx + HTTPS` 对外提供服务。
+
 ### 4. 准备本地资源目录 `resources_metadata/` 以获得更广覆盖
 
 不少 skill 的访问模式是 `LOCAL_FILE`。这类资源不是首次 demo 的硬前置条件，但会影响覆盖面，也决定了部分本地数据型 skill 能不能真正可用。

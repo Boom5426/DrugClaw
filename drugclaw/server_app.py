@@ -33,10 +33,13 @@ def create_app(
 
     @app.post("/api/query")
     def query(request: QueryRequest) -> dict:
+        runtime_config = getattr(app.state.runtime, "config", None)
+        default_mode = getattr(runtime_config, "SERVER_DEFAULT_MODE", "simple")
+        effective_mode = request.mode or default_mode
         try:
             return app.state.runtime.run_query(
                 query=request.query,
-                mode=request.mode,
+                mode=effective_mode,
                 resource_filter=request.resource_filter,
                 save_md_report=request.save_md_report,
             )

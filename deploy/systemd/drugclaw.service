@@ -1,0 +1,15 @@
+[Unit]
+Description=DrugClaw Web Service
+After=network.target
+
+[Service]
+Type=simple
+User=bob
+WorkingDirectory=/data/boom/Agent/DrugClaw
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/data/boom/Agent/DrugClaw/.venv/bin/python -m drugclaw serve --host 127.0.0.1 --port 8000 --key-file navigator_api_keys.json
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

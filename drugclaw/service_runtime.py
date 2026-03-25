@@ -132,6 +132,7 @@ class DrugClawServiceRuntime:
             resource_filter=resource_filter,
         )
         self._acquire_slot()
+        callback_registered = False
         try:
             future = self._executor.submit(
                 self.system.query,
@@ -141,12 +142,15 @@ class DrugClawServiceRuntime:
                 verbose=False,
                 save_md_report=save_md_report,
             )
+            future.add_done_callback(lambda _: self._release_slot())
+            callback_registered = True
             try:
                 return future.result(timeout=self._timeout_seconds)
             except FuturesTimeoutError as exc:
                 raise RuntimeError("query timed out") from exc
         finally:
-            self._release_slot()
+            if not callback_registered:
+                self._release_slot()
 
     def get_query(self, query_id: str) -> dict[str, Any]:
         logger = getattr(self.system, "logger", None)
