@@ -20,13 +20,23 @@ import csv
 import gzip
 import json
 import re
+from pathlib import Path
 from typing import Union
 
 # ── Config ──────────────────────────────────────────────────────────────
-DATA_DIR = os.environ.get(
-    "DRUGCENTRAL_DIR",
-    "/blue/qsong1/wang.qing/AgentLLM/DrugClaw/resources_metadata/drug_knowledgebase/DrugCentral",
-)
+def _resolve_data_dir() -> str:
+    override = os.environ.get("DRUGCENTRAL_DIR")
+    if override:
+        return override
+    return str(
+        Path(__file__).resolve().parents[3]
+        / "resources_metadata"
+        / "drug_knowledgebase"
+        / "DrugCentral"
+    )
+
+
+DATA_DIR = _resolve_data_dir()
 
 STRUCTURES_FILE = os.path.join(DATA_DIR, "structures.smiles.tsv")
 DTI_FILE        = os.path.join(DATA_DIR, "drug.target.interaction.tsv")
