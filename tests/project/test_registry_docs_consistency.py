@@ -28,7 +28,7 @@ def test_docs_reference_navigator_keys_and_venv() -> None:
         assert "python3 -m venv .venv" in content
         assert ".venv/bin/activate" in content
         assert "python -m pip install --upgrade pip" in content
-        assert "python -m pip install -e .[dev] --no-build-isolation" in content
+        assert "python -m pip install --no-build-isolation -r requirements.txt" in content
 
     for relative_path in ("README.md", "README_CN.md"):
         content = (ROOT / relative_path).read_text(encoding="utf-8")

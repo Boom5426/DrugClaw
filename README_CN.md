@@ -47,15 +47,15 @@ DrugClaw 是一个围绕药物任务构建的多智能体 RAG 系统，专门处
 python3 -m venv .venv
 . .venv/bin/activate  # Windows: `.venv\\Scripts\\activate`
 python -m pip install --upgrade pip
-python -m pip install -e .[dev] --no-build-isolation
+python -m pip install --no-build-isolation -r requirements.txt
 ```
 
-可选依赖，仅在你要启用对应 CLI 型 skill 时安装：
+`requirements.txt` 会一次装好核心包、测试依赖、常见本地 example 依赖，以及之前分散列出来的 CLI-first skill 可选依赖。
+
+如果你只想保留更轻的可编辑安装：
 
 ```bash
-python -m pip install chembl_webresource_client
-python -m pip install libchebipy
-python -m pip install bioservices
+python -m pip install -e .[dev] --no-build-isolation
 ```
 
 ### 2. 准备 `navigator_api_keys.json`

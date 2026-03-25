@@ -41,3 +41,14 @@ def test_skill_docs_do_not_contain_legacy_machine_specific_repo_paths() -> None:
             offenders.append(path.relative_to(ROOT).as_posix())
 
     assert offenders == []
+
+
+def test_requirements_txt_exists_and_readmes_document_one_shot_install() -> None:
+    requirements = ROOT / "requirements.txt"
+    assert requirements.exists()
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_cn = (ROOT / "README_CN.md").read_text(encoding="utf-8")
+
+    assert "python -m pip install --no-build-isolation -r requirements.txt" in readme
+    assert "python -m pip install --no-build-isolation -r requirements.txt" in readme_cn

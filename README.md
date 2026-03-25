@@ -47,15 +47,15 @@ Run the commands below from the cloned repository root.
 python3 -m venv .venv
 . .venv/bin/activate  # Windows: `.venv\\Scripts\\activate`
 python -m pip install --upgrade pip
-python -m pip install -e .[dev] --no-build-isolation
+python -m pip install --no-build-isolation -r requirements.txt
 ```
 
-Optional dependencies for selected CLI-based skills:
+`requirements.txt` installs the core package, test dependencies, common local-example libraries, and the CLI-first skill extras that were previously listed separately.
+
+If you prefer the smaller editable install only:
 
 ```bash
-python -m pip install chembl_webresource_client
-python -m pip install libchebipy
-python -m pip install bioservices
+python -m pip install -e .[dev] --no-build-isolation
 ```
 
 ### 2. Prepare `navigator_api_keys.json`

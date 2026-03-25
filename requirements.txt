@@ -1,0 +1,13 @@
+-e .[dev]
+
+# Optional CLI-first skill dependencies already referenced in the README.
+chembl_webresource_client
+libchebipy
+bioservices
+
+# Common local example dependencies.
+pandas
+openpyxl
+networkx
+lxml
+pypdf
