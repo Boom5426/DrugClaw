@@ -8,10 +8,8 @@
   <strong>Agentic RAG for Drug Knowledge Retrieval, Reasoning, and Evidence Synthesis</strong>
 </p>
 
-<p align="center">
-  
-  <a href="./DrugClaw_Paper.pdf">项目技术报告</a>
-  
+<p align="center">  
+  <a href="./DrugClaw_Paper.pdf">项目技术报告</a>  
   <a href="./README_CN.md">中文文档 / Chinese Version</a>
 </p>
 
