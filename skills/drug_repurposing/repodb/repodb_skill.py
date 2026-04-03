@@ -82,7 +82,8 @@ class RepoDBSkill(DatasetRAGSkill):
             logger.error("RepoDB: cannot load %s — %s", path, exc)
 
     def is_available(self) -> bool:
-        return self._implemented
+        self._ensure_loaded()
+        return bool(self._rows)
 
 
 

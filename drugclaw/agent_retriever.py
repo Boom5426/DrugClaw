@@ -18,6 +18,8 @@ from .llm_client import LLMClient
 from .query_plan import (
     QueryPlan,
     build_fallback_query_plan,
+    infer_entities_from_query,
+    infer_question_type_from_query,
     is_direct_target_lookup,
     normalize_question_type,
     prioritize_target_lookup_skills,
@@ -371,16 +373,26 @@ Provide your plan in JSON format:
         question_type = normalize_question_type(getattr(plan, "question_type", ""))
         direct_question_type = (
             is_direct_target_lookup(query=effective_query, question_type=question_type)
-            or any(marker in question_type for marker in ("label", "retrieval"))
+            or any(
+                marker in question_type
+                for marker in ("label", "retrieval", "pharmacogenomics", "pgx", "repurposing", "mechanism")
+            )
         )
         direct_query_shape = has_drug_entity and any(
             marker in effective_query
             for marker in (
                 "target",
                 "targets",
+                "mechanism",
+                "mechanism of action",
+                " moa",
                 "label",
                 "prescribing",
                 "information",
+                "approved indication",
+                "approved indications",
+                "repurposing",
+                "repositioning",
             )
         )
         if (
@@ -402,17 +414,29 @@ Provide your plan in JSON format:
         if resource_filter:
             selected_skills = self._filter_available_skills(list(resource_filter))
         else:
-            combined_skill_hints = list(plan.preferred_skills) + list(
-                self.skill_registry.get_skills_for_query(query)
+            explicit_plan_skills = self._filter_available_skills(list(plan.preferred_skills))
+            use_plan_skills_exclusively = bool(
+                explicit_plan_skills
+                and plan.preferred_skills
+                and not is_direct_target_lookup(
+                    query=query,
+                    question_type=plan.question_type,
+                )
             )
-            combined_skill_hints = self._apply_query_skill_policy(
-                combined_skill_hints,
-                query=query,
-                question_type=plan.question_type,
-            )
-            selected_skills = self._filter_available_skills(combined_skill_hints)
-            if selected_skills:
-                selected_skills = selected_skills[:3]
+            if use_plan_skills_exclusively:
+                selected_skills = explicit_plan_skills[:3]
+            else:
+                combined_skill_hints = list(plan.preferred_skills) + list(
+                    self.skill_registry.get_skills_for_query(query)
+                )
+                combined_skill_hints = self._apply_query_skill_policy(
+                    combined_skill_hints,
+                    query=query,
+                    question_type=plan.question_type,
+                )
+                selected_skills = self._filter_available_skills(combined_skill_hints)
+                if selected_skills:
+                    selected_skills = selected_skills[:3]
 
         return {
             "key_entities": dict(plan.entities),
@@ -595,7 +619,11 @@ Respond in JSON:
         try:
             entities = self.llm.generate_json([{"role": "user", "content": entity_prompt}])
         except Exception:
-            entities = self._infer_entities_from_query(query)
+            entities = infer_entities_from_query(query)
+
+        entities = self._normalize_entities_for_coder(entities if isinstance(entities, dict) else {})
+        if not entities:
+            entities = infer_entities_from_query(query)
 
         return {
             "key_entities": entities,
@@ -613,8 +641,8 @@ Respond in JSON:
         fallback = build_fallback_query_plan(query)
         entities = self._normalize_entities_for_coder(key_entities)
         if not entities:
-            entities = self._infer_entities_from_query(query)
-        question_type = self._infer_question_type_from_query(query)
+            entities = infer_entities_from_query(query)
+        question_type = infer_question_type_from_query(query)
         return QueryPlan(
             question_type=question_type or fallback.question_type,
             entities=entities,
@@ -630,32 +658,11 @@ Respond in JSON:
 
     @staticmethod
     def _infer_question_type_from_query(query: str) -> str:
-        lowered = str(query).strip().lower()
-        if not lowered:
-            return "unknown"
-        if any(marker in lowered for marker in ("prescribing", "label", "safety", "warning", "contraindication")):
-            return "labeling"
-        if is_direct_target_lookup(query=lowered):
-            return "target_lookup"
-        return "unknown"
+        return infer_question_type_from_query(query)
 
     @staticmethod
     def _infer_entities_from_query(query: str) -> Dict[str, List[str]]:
-        lowered = str(query).strip().lower()
-        if not lowered:
-            return {}
-
-        for pattern in (
-            r"information\s+is\s+available\s+for\s+([a-z0-9\-]+)",
-            r"available\s+for\s+([a-z0-9\-]+)",
-            r"targets?\s+of\s+([a-z0-9\-]+)",
-            r"does\s+([a-z0-9\-]+)\s+target",
-            r"about\s+([a-z0-9\-]+)$",
-        ):
-            match = re.search(pattern, lowered)
-            if match:
-                return {"drug": [match.group(1)]}
-        return {}
+        return infer_entities_from_query(query)
 
     @staticmethod
     def _text_to_retrieved_content(

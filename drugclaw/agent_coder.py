@@ -383,39 +383,42 @@ Return ONLY Python code."""
         query: str,
         max_results: int,
     ) -> tuple[str, str, List[Dict[str, Any]]]:
-        """Fallback: run retrieve.py CLI script if available, else skill.retrieve()."""
+        """Fallback: use retrieve.py only for local/CLI skills, else skill.retrieve()."""
         skill = self.skill_registry.get_skill(skill_name)
         if skill is None:
             return "", f"Skill '{skill_name}' not registered", []
 
         retrieve_py_output = ""
+        access_mode = getattr(skill, "access_mode", "")
+        should_run_retrieve_py = access_mode in {"CLI", "LOCAL_FILE", "DATASET"}
 
-        # Try the fixed retrieve.py script first (for text output)
-        try:
-            skill_file = inspect.getfile(skill.__class__)
-            skill_dir = os.path.dirname(skill_file)
-            retrieve_py = os.path.join(skill_dir, "retrieve.py")
-            if os.path.isfile(retrieve_py):
-                entity_args = [
-                    name
-                    for enames in entities.values()
-                    for name in enames
-                ]
-                if entity_args:
-                    print(f"[Code Agent] Running fixed retrieve.py for {skill_name}: "
-                          f"{entity_args}")
-                    proc = subprocess.run(
-                        [sys.executable, retrieve_py] + entity_args,
-                        capture_output=True,
-                        text=True,
-                        timeout=60,
-                    )
-                    retrieve_py_output = proc.stdout.strip()
-                    if proc.returncode != 0 and not retrieve_py_output:
-                        print(f"[Code Agent] retrieve.py failed for {skill_name}: "
-                              f"{proc.stderr.strip()[:200]}")
-        except Exception as exc:
-            print(f"[Code Agent] retrieve.py execution error for {skill_name}: {exc}")
+        # For REST skills, structured retrieve() is the source of truth.
+        if should_run_retrieve_py:
+            try:
+                skill_file = inspect.getfile(skill.__class__)
+                skill_dir = os.path.dirname(skill_file)
+                retrieve_py = os.path.join(skill_dir, "retrieve.py")
+                if os.path.isfile(retrieve_py):
+                    entity_args = [
+                        name
+                        for enames in entities.values()
+                        for name in enames
+                    ]
+                    if entity_args:
+                        print(f"[Code Agent] Running fixed retrieve.py for {skill_name}: "
+                              f"{entity_args}")
+                        proc = subprocess.run(
+                            [sys.executable, retrieve_py] + entity_args,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        retrieve_py_output = proc.stdout.strip()
+                        if proc.returncode != 0 and not retrieve_py_output:
+                            print(f"[Code Agent] retrieve.py failed for {skill_name}: "
+                                  f"{proc.stderr.strip()[:200]}")
+            except Exception as exc:
+                print(f"[Code Agent] retrieve.py execution error for {skill_name}: {exc}")
 
         # Always call skill.retrieve() for structured records
         try:

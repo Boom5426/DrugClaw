@@ -3,6 +3,7 @@ from __future__ import annotations
 from drugclaw.evidence import (
     ClaimSummary,
     EvidenceItem,
+    build_evidence_items_for_skill,
     score_answer_confidence,
     score_claim_confidence,
     score_evidence_item,
@@ -87,3 +88,43 @@ def test_claim_and_answer_confidence_drop_when_evidence_conflicts() -> None:
 
     assert claim_score < 0.8
     assert answer_score == claim_score
+
+
+def test_build_evidence_items_semanticizes_kegg_ddi_enzyme_without_raw_partner_ids() -> None:
+    items = build_evidence_items_for_skill(
+        skill_name="KEGG Drug",
+        query="What are the clinically important drug-drug interactions of warfarin and their mechanisms?",
+        records=[
+            {
+                "source": "KEGG Drug",
+                "source_entity": "warfarin",
+                "relationship": "drug_drug_interaction",
+                "target_entity": "dr:D00015",
+                "evidence_text": "KEGG Drug DDI: dr:D00564 interacts with dr:D00015 (CI; Enzyme: CYP2C9)",
+                "ddi_description": "Enzyme: CYP2C9",
+                "target_type": "drug_or_compound",
+            }
+        ],
+    )
+
+    assert items[0].claim == "warfarin interaction mechanism involves CYP2C9"
+
+
+def test_build_evidence_items_marks_unclassified_kegg_ddi_as_unresolved() -> None:
+    items = build_evidence_items_for_skill(
+        skill_name="KEGG Drug",
+        query="What are the clinically important drug-drug interactions of warfarin and their mechanisms?",
+        records=[
+            {
+                "source": "KEGG Drug",
+                "source_entity": "warfarin",
+                "relationship": "drug_drug_interaction",
+                "target_entity": "cpd:C00304",
+                "evidence_text": "KEGG Drug DDI: dr:D00564 interacts with cpd:C00304 (P; unclassified)",
+                "ddi_description": "unclassified",
+                "target_type": "drug_or_compound",
+            }
+        ],
+    )
+
+    assert items[0].claim == "warfarin has unresolved KEGG interaction entries"

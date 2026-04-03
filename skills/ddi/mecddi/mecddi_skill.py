@@ -55,7 +55,8 @@ class MecDDISkill(RAGSkill):
             logger.error("MecDDI: load failed — %s", exc)
 
     def is_available(self) -> bool:
-        return self._implemented
+        self._ensure_loaded()
+        return bool(self._drug_index)
 
     def retrieve(
         self,

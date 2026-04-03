@@ -303,6 +303,7 @@ def _doctor_check_presets(key_file: str) -> List[str]:
     for preset_name, preset in DEMO_PRESETS.items():
         required = preset["resource_filter"]
         unavailable = []
+        available_count = 0
         details = []
         for skill_name in required:
             skill = registry.get_skill(skill_name)
@@ -321,7 +322,9 @@ def _doctor_check_presets(key_file: str) -> List[str]:
                 details.append(f"{skill_name}={access}:{path_note}")
             if not available:
                 unavailable.append(skill_name)
-        ok = not unavailable
+            else:
+                available_count += 1
+        ok = available_count > 0
         lines.append(
             _status_line(
                 f"demo:{preset_name}",

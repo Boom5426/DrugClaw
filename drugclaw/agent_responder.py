@@ -10,6 +10,7 @@ from .claim_assessment import ClaimAssessment, assess_claims
 from .evidence import ClaimSummary, FinalAnswer, score_answer_confidence, score_claim_confidence
 from .models import AgentState, EvidencePath
 from .llm_client import LLMClient
+from .query_plan import infer_entities_from_query, infer_question_type_from_query
 
 class ResponderAgent:
     """
@@ -352,6 +353,11 @@ Formatting requirements:
         )
         state.final_answer_structured = final_answer
         state.current_answer = final_answer.answer_text
+        state.claim_assessments = (
+            assess_claims(final_answer.evidence_items)
+            if final_answer.evidence_items
+            else []
+        )
 
     def _build_final_answer(
         self,
@@ -374,8 +380,19 @@ Formatting requirements:
             )
 
         filtered_items = list(evidence_items)
+        query_type = infer_question_type_from_query(query)
         if self._is_target_lookup_query(query):
             filtered_items = self._filter_target_evidence_items(filtered_items) or filtered_items
+        elif query_type in {"ddi", "ddi_mechanism"}:
+            filtered_items = self._filter_ddi_evidence_items(filtered_items) or filtered_items
+        elif query_type == "pharmacogenomics":
+            filtered_items = self._filter_pgx_evidence_items(query, filtered_items) or filtered_items
+        elif query_type == "adr":
+            filtered_items = self._filter_adr_evidence_items(filtered_items) or filtered_items
+        elif query_type == "labeling":
+            filtered_items = self._filter_labeling_evidence_items(query, filtered_items) or filtered_items
+        if not self._is_target_lookup_query(query):
+            self._semanticize_claims_for_query_type(query_type, filtered_items)
 
         assessments = list(claim_assessments or [])
         if not assessments:
@@ -432,11 +449,313 @@ Formatting requirements:
                 continue
             if target_entity and self._looks_like_cell_line(target_entity):
                 continue
-            if relationship and "activity" not in relationship and "target" not in relationship and "bind" not in relationship:
+            if relationship and not any(
+                marker in relationship
+                for marker in (
+                    "activity",
+                    "target",
+                    "bind",
+                    "inhib",
+                    "agon",
+                    "antagon",
+                    "substr",
+                    "modulat",
+                    "block",
+                    "activat",
+                )
+            ):
                 continue
 
             filtered.append(item)
         return filtered
+
+    def _filter_ddi_evidence_items(self, evidence_items) -> List[Any]:
+        ddi_like_items: List[Any] = []
+        informative_items: List[Any] = []
+
+        for item in evidence_items:
+            relationship = str(item.metadata.get("relationship", "")).lower()
+            source_skill = str(getattr(item, "source_skill", "")).strip().lower()
+            if (
+                "interaction" not in relationship
+                and "ddi" not in relationship
+                and source_skill not in {"ddinter", "kegg drug", "mecddi", "drugbank"}
+            ):
+                continue
+
+            ddi_like_items.append(item)
+            description = str(
+                item.structured_payload.get("ddi_description")
+                or item.structured_payload.get("description")
+                or ""
+            ).strip()
+            target_entity = str(item.metadata.get("target_entity", "")).strip()
+            partner = ""
+            if target_entity and not self._looks_like_compound_identifier(target_entity):
+                partner = target_entity
+            if not partner:
+                partner = self._extract_partner_from_text(description) or self._extract_partner_from_text(
+                    str(getattr(item, "snippet", "") or "")
+                )
+            if partner and self._looks_like_compound_identifier(partner):
+                partner = ""
+
+            if partner or (description and description.lower() != "unclassified"):
+                informative_items.append(item)
+
+        if informative_items:
+            return informative_items
+        if ddi_like_items:
+            return ddi_like_items
+        return []
+
+    def _filter_pgx_evidence_items(self, query: str, evidence_items) -> List[Any]:
+        primary_drug = self._extract_query_drug_name(query)
+        filtered = []
+        for item in evidence_items:
+            relationship = str(item.metadata.get("relationship", "")).lower()
+            source_skill = str(getattr(item, "source_skill", "")).strip()
+            target_type = str(item.metadata.get("target_type", "")).lower()
+            if (
+                "pgx" in relationship
+                or source_skill in {"CPIC", "PharmGKB"}
+                or target_type == "gene"
+            ):
+                filtered.append(item)
+
+        if primary_drug:
+            strict_matches = []
+            for item in filtered:
+                source_entity = str(item.metadata.get("source_entity", "")).strip().lower()
+                claim_lower = str(getattr(item, "claim", "")).strip().lower()
+                if source_entity:
+                    if primary_drug not in source_entity:
+                        continue
+                    if " and " in source_entity and not source_entity.startswith(primary_drug):
+                        continue
+                    strict_matches.append(item)
+                    continue
+                if primary_drug in claim_lower:
+                    strict_matches.append(item)
+            if strict_matches:
+                filtered = strict_matches
+
+        return filtered
+
+    @staticmethod
+    def _filter_adr_evidence_items(evidence_items) -> List[Any]:
+        noise_targets = {
+            "SCHIZOPHRENIA",
+            "OFF LABEL USE",
+            "TREATMENT NONCOMPLIANCE",
+            "PSYCHOTIC DISORDER",
+            "HOSPITALISATION",
+            "DRUG INEFFECTIVE",
+            "DRUG INTERACTION",
+            "TOXICITY TO VARIOUS AGENTS",
+        }
+        filtered = []
+        for item in evidence_items:
+            relationship = str(item.metadata.get("relationship", "")).lower()
+            target_entity = str(item.metadata.get("target_entity", "")).strip().upper()
+            if relationship != "causes_adverse_event":
+                continue
+            if target_entity in noise_targets:
+                continue
+            filtered.append(item)
+        return filtered
+
+    def _filter_labeling_evidence_items(self, query: str, evidence_items) -> List[Any]:
+        primary_drug = self._extract_query_drug_name(query)
+        filtered = list(evidence_items)
+
+        if primary_drug:
+            strict_matches = []
+            for item in filtered:
+                source_entity = str(item.metadata.get("source_entity", "")).strip().lower()
+                if not source_entity:
+                    continue
+                if primary_drug not in source_entity:
+                    continue
+                if " and " in source_entity and not source_entity.startswith(primary_drug):
+                    continue
+                strict_matches.append(item)
+            if strict_matches:
+                filtered = strict_matches
+
+        primary_label_relationships = {
+            "indicated_for",
+            "has_warning",
+            "has_adverse_reaction",
+            "interacts_with",
+            "has_mechanism",
+        }
+        if any(
+            str(item.metadata.get("relationship", "")).lower() in primary_label_relationships
+            for item in filtered
+        ):
+            richer_items = [
+                item
+                for item in filtered
+                if str(item.metadata.get("relationship", "")).lower() in primary_label_relationships
+            ]
+            if richer_items:
+                filtered = richer_items
+
+        return filtered
+
+    @staticmethod
+    def _extract_query_drug_name(query: str) -> str:
+        inferred_entities = infer_entities_from_query(query)
+        inferred_drugs = inferred_entities.get("drug") or []
+        if inferred_drugs:
+            return str(inferred_drugs[0]).strip().lower()
+
+        lowered = (query or "").strip().lower()
+        patterns = (
+            r"of\s+([a-z0-9\-]+)\?$",
+            r"for\s+([a-z0-9\-]+)\?$",
+            r"of\s+([a-z0-9\-]+)\s+and\s+their",
+            r"for\s+([a-z0-9\-]+)$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, lowered)
+            if match:
+                return match.group(1)
+        return ""
+
+    def _semanticize_claims_for_query_type(self, query_type: str, evidence_items) -> None:
+        for item in evidence_items:
+            semantic_claim = self._semantic_claim_for_item(query_type, item)
+            if semantic_claim:
+                item.claim = semantic_claim
+
+    def _semantic_claim_for_item(self, query_type: str, item: Any) -> str:
+        if query_type in {"ddi", "ddi_mechanism"}:
+            return self._ddi_claim_for_item(item)
+        if query_type == "labeling":
+            return self._labeling_claim_for_item(item)
+        if query_type == "pharmacogenomics":
+            return self._pgx_claim_for_item(item)
+        if query_type == "adr":
+            return self._adr_claim_for_item(item)
+        return ""
+
+    def _ddi_claim_for_item(self, item: Any) -> str:
+        source_entity = str(item.metadata.get("source_entity", "")).strip()
+        target_entity = str(item.metadata.get("target_entity", "")).strip()
+        description = str(
+            item.structured_payload.get("ddi_description")
+            or item.structured_payload.get("description")
+            or ""
+        ).strip()
+        label = str(item.structured_payload.get("ddi_label") or "").strip()
+        snippet = str(getattr(item, "snippet", "") or "").strip()
+
+        partner = ""
+        if target_entity and not self._looks_like_compound_identifier(target_entity):
+            partner = target_entity
+        if not partner:
+            partner = self._extract_partner_from_text(description) or self._extract_partner_from_text(snippet)
+        if partner and self._looks_like_compound_identifier(partner):
+            partner = ""
+
+        if description.lower().startswith("enzyme:"):
+            enzyme = description.split(":", 1)[1].strip()
+            if enzyme:
+                return f"{source_entity} interaction mechanism involves {enzyme}"
+        if source_entity and partner:
+            details = description or label
+            if details:
+                return f"{source_entity} interacts with {partner} ({details})"
+            return f"{source_entity} interacts with {partner}"
+        if source_entity and description.lower() == "unclassified":
+            return f"{source_entity} has unresolved KEGG interaction entries"
+        if source_entity and description:
+            return f"{source_entity} has a clinically important interaction: {description}"
+        return ""
+
+    def _labeling_claim_for_item(self, item: Any) -> str:
+        source_entity = str(item.metadata.get("source_entity", "")).strip()
+        relationship = str(item.metadata.get("relationship", "")).strip().lower()
+        target_entity = str(item.metadata.get("target_entity", "")).strip()
+        snippet = self._clean_label_text(str(getattr(item, "snippet", "") or ""))
+
+        if relationship == "indicated_for" and snippet:
+            return f"{source_entity}: {snippet}"
+        if relationship == "has_warning" and snippet:
+            return f"{source_entity} warning: {snippet}"
+        if relationship == "has_adverse_reaction" and snippet:
+            return f"{source_entity} adverse reactions: {snippet}"
+        if relationship == "interacts_with" and snippet:
+            return f"{source_entity} interaction information: {snippet}"
+        if relationship == "has_mechanism" and snippet:
+            return f"{source_entity} mechanism: {snippet}"
+        if relationship == "has_patient_drug_info" and target_entity:
+            return f"{source_entity} has patient guidance: {target_entity}"
+        if relationship == "has_official_label":
+            if snippet:
+                return f"{source_entity} official label summary: {snippet}"
+            if target_entity:
+                return f"{source_entity} official label available: {target_entity}"
+        return ""
+
+    def _pgx_claim_for_item(self, item: Any) -> str:
+        source_entity = str(item.metadata.get("source_entity", "")).strip()
+        target_entity = str(item.metadata.get("target_entity", "")).strip()
+        relationship = str(item.metadata.get("relationship", "")).strip().lower()
+        cpic_level = str(item.structured_payload.get("cpiclevel") or "").strip()
+        clinpgx_level = str(item.structured_payload.get("clinpgxlevel") or "").strip()
+        pgx_testing = str(item.structured_payload.get("pgxtesting") or "").strip()
+        actionable = bool(item.structured_payload.get("usedforrecommendation"))
+
+        if "guideline" in relationship:
+            details: List[str] = []
+            if cpic_level:
+                details.append(f"CPIC level {cpic_level}")
+            if clinpgx_level:
+                details.append(f"ClinPGx {clinpgx_level}")
+            if actionable or pgx_testing.lower().startswith("actionable"):
+                details.append("actionable guidance")
+            suffix = f" ({'; '.join(details)})" if details else ""
+            return f"{source_entity} PGx guidance highlights {target_entity}{suffix}"
+        if "pgx" in relationship or "association" in relationship:
+            return f"{source_entity} has a pharmacogenomic association with {target_entity}"
+        return ""
+
+    def _adr_claim_for_item(self, item: Any) -> str:
+        source_entity = str(item.metadata.get("source_entity", "")).strip()
+        target_entity = str(item.metadata.get("target_entity", "")).strip()
+        relationship = str(item.metadata.get("relationship", "")).strip().lower()
+        if relationship == "causes_adverse_event" and source_entity and target_entity:
+            return f"{source_entity} serious safety signal: {target_entity}"
+        return ""
+
+    @staticmethod
+    def _looks_like_compound_identifier(value: str) -> bool:
+        return bool(re.fullmatch(r"(?:cpd|dr):[A-Z0-9]+", value.strip(), re.IGNORECASE))
+
+    @staticmethod
+    def _extract_partner_from_text(text: str) -> str:
+        if not text:
+            return ""
+        match = re.search(r"\bwith\s+([A-Za-z][A-Za-z0-9+/\-\s]{1,80})", text)
+        if not match:
+            return ""
+        candidate = match.group(1)
+        candidate = re.split(r"[.;,()]", candidate, maxsplit=1)[0].strip()
+        if candidate.lower() in {"dr", "cpd"}:
+            return ""
+        return candidate
+
+    @staticmethod
+    def _clean_label_text(text: str) -> str:
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        if not cleaned:
+            return ""
+        cleaned = re.sub(r"^\d+(?:\.\d+)?\s+[A-Z][A-Z\s/&-]{3,40}\s+", "", cleaned)
+        cleaned = re.sub(r"^\d+(?:\.\d+)?\s+[A-Z][a-zA-Z\s/&-]{3,40}\s+", "", cleaned)
+        return cleaned.strip()
 
     @staticmethod
     def _summarize_claims(
@@ -738,11 +1057,16 @@ Formatting requirements:
         alias_map = {
             "tyrosine-protein kinase abl1": "ABL1",
             "tyrosine-protein kinase abl": "ABL1",
+            "abl proto-oncogene 1, non-receptor tyrosine kinase": "ABL1",
             "abl1": "ABL1",
             "abl": "ABL1",
             "mast/stem cell growth factor receptor kit": "KIT",
+            "kit proto-oncogene, receptor tyrosine kinase": "KIT",
             "kit": "KIT",
+            "bcr activator of rhogef and gtpase": "BCR",
+            "bcr": "BCR",
             "platelet-derived growth factor receptor beta": "PDGFRB",
+            "platelet derived growth factor receptor beta": "PDGFRB",
             "pdgfrb": "PDGFRB",
             "platelet-derived growth factor receptor alpha": "PDGFRA",
             "pdgfra": "PDGFRA",
@@ -761,7 +1085,7 @@ Formatting requirements:
         token_match = re.search(r"\b([A-Z0-9-]{2,8})\b$", cleaned.upper())
         if token_match:
             token = token_match.group(1)
-            if token not in {"TYPE", "ALPHA", "BETA", "GAMMA", "RECEPTOR", "KINASE", "PROTEIN"}:
+            if token not in {"TYPE", "ALPHA", "BETA", "GAMMA", "RECEPTOR", "KINASE", "PROTEIN", "GTPASE"}:
                 return token
         return cleaned
 

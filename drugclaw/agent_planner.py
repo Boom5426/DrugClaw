@@ -6,7 +6,10 @@ from typing import Any, Dict, Iterable, List, Optional
 from .query_plan import (
     QueryPlan,
     build_fallback_query_plan,
+    infer_entities_from_query,
     is_direct_target_lookup,
+    is_supported_question_type,
+    normalize_question_type,
     prioritize_target_lookup_skills,
 )
 
@@ -123,14 +126,42 @@ Rules:
         fallback = build_fallback_query_plan(query)
         entities = self._normalize_entities(payload.get("entities"))
         if not entities:
-            entities = self._infer_entities_from_query(query)
+            entities = infer_entities_from_query(query)
+        raw_question_type = str(payload.get("question_type") or "").strip()
+        raw_question_type_key = raw_question_type.lower().replace("-", "_").replace(" ", "_")
+        question_type = normalize_question_type(raw_question_type)
+        use_fallback_skills = False
+        if (
+            not raw_question_type
+            or (
+                normalize_question_type(question_type) == "unknown"
+                and fallback.question_type != "unknown"
+            )
+            or (
+                not is_supported_question_type(question_type)
+                and fallback.question_type != "unknown"
+            )
+        ):
+            question_type = fallback.question_type
+            use_fallback_skills = True
+        elif raw_question_type_key != question_type:
+            use_fallback_skills = True
+
+        preferred_skills = self._normalize_list(payload.get("preferred_skills"))
+        if use_fallback_skills or not preferred_skills:
+            preferred_skills = fallback.preferred_skills
+
+        requires_graph_reasoning = bool(payload.get("requires_graph_reasoning", False))
+        if use_fallback_skills:
+            requires_graph_reasoning = fallback.requires_graph_reasoning
+
         return QueryPlan(
-            question_type=str(payload.get("question_type") or fallback.question_type),
+            question_type=question_type or fallback.question_type,
             entities=entities,
             subquestions=self._normalize_list(payload.get("subquestions")) or fallback.subquestions,
-            preferred_skills=self._normalize_list(payload.get("preferred_skills")),
+            preferred_skills=preferred_skills,
             preferred_evidence_types=self._normalize_list(payload.get("preferred_evidence_types")),
-            requires_graph_reasoning=bool(payload.get("requires_graph_reasoning", False)),
+            requires_graph_reasoning=requires_graph_reasoning,
             requires_prediction_sources=bool(payload.get("requires_prediction_sources", False)),
             requires_web_fallback=bool(payload.get("requires_web_fallback", False)),
             answer_risk_level=str(payload.get("answer_risk_level") or fallback.answer_risk_level),
@@ -167,34 +198,4 @@ Rules:
 
     @staticmethod
     def _infer_entities_from_query(query: str) -> Dict[str, List[str]]:
-        lowered = query.strip().lower()
-        if not lowered:
-            return {}
-
-        ddi_match = re.search(
-            r"how does\s+([a-z0-9\-]+)\s+interact with\s+([a-z0-9\-]+)",
-            lowered,
-        )
-        if ddi_match:
-            return {"drug": [ddi_match.group(1), ddi_match.group(2)]}
-
-        for pattern in (
-            r"targets?\s+of\s+([a-z0-9\-]+)",
-            r"information\s+is\s+available\s+for\s+([a-z0-9\-]+)",
-            r"available\s+for\s+([a-z0-9\-]+)",
-            r"about\s+([a-z0-9\-]+)$",
-        ):
-            match = re.search(pattern, lowered)
-            if match:
-                return {"drug": [match.group(1)]}
-
-        tokens = re.findall(r"[a-z0-9\-]+", lowered)
-        stopwords = {
-            "what", "are", "the", "known", "drug", "drugs", "target", "targets",
-            "of", "for", "does", "is", "available", "information", "how",
-            "interact", "with", "and", "safety", "prescribing",
-        }
-        candidates = [token for token in tokens if token not in stopwords and len(token) > 2]
-        if candidates:
-            return {"drug": [candidates[-1]]}
-        return {}
+        return infer_entities_from_query(query)

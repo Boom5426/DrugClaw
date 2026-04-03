@@ -153,6 +153,58 @@ def test_doctor_demo_check_uses_runtime_availability_for_local_skills(monkeypatc
     assert any("SIDER=LOCAL_FILE:available" in line for line in lines)
 
 
+def test_doctor_demo_check_allows_partial_preset_availability_when_one_resource_is_usable(monkeypatch) -> None:
+    class _RegistryStub:
+        def get_skill(self, name):
+            if name == "SIDER":
+                return type(
+                    "SIDERSkill",
+                    (),
+                    {"access_mode": "LOCAL_FILE", "config": {}, "is_available": lambda self: False},
+                )()
+            if name == "FAERS":
+                return type(
+                    "FAERSSkill",
+                    (),
+                    {"access_mode": "REST_API", "config": {}, "is_available": lambda self: True},
+                )()
+            if name in {"ChEMBL", "DGIdb", "Open Targets Platform", "DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"}:
+                return type("Skill", (), {"access_mode": "REST_API", "config": {}, "is_available": lambda self: True})()
+            return None
+
+    class _ResourceRegistryStub:
+        def get_resource(self, name):
+            if name == "SIDER":
+                return type(
+                    "Entry",
+                    (),
+                    {
+                        "access_mode": "LOCAL_FILE",
+                        "status_reason": "requires local metadata but no metadata path is configured",
+                    },
+                )()
+            if name == "FAERS":
+                return type("Entry", (), {"access_mode": "REST_API", "status_reason": "available"})()
+            if name in {"ChEMBL", "DGIdb", "Open Targets Platform", "DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"}:
+                return type("Entry", (), {"access_mode": "REST_API", "status_reason": "available"})()
+            return None
+
+    monkeypatch.setattr(
+        cli,
+        "_load_registry_for_cli",
+        lambda key_file, strict_config=True: (_RegistryStub(), _ResourceRegistryStub()),
+    )
+
+    lines = cli._doctor_check_presets("navigator_api_keys.json")
+
+    assert any(
+        line.startswith("[OK] demo:adr:")
+        and "SIDER=LOCAL_FILE:requires local metadata but no metadata path is configured" in line
+        and "FAERS=REST_API:available" in line
+        for line in lines
+    )
+
+
 def test_doctor_ignores_warnings_when_computing_exit_code(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "_doctor_check_key_file", lambda key_file: ["[OK] key_file: ok"])
     monkeypatch.setattr(cli, "_doctor_check_imports", lambda: ["[OK] openai: importable"])

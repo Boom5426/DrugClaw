@@ -75,7 +75,8 @@ class SIDERSkill(RAGSkill):
             self._name_map[name.lower()] = sid
 
     def is_available(self) -> bool:
-        return self._implemented
+        self._ensure_loaded()
+        return bool(self._stitch_to_se)
 
     def retrieve(
         self,

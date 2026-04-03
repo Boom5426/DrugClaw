@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
 
 from drugclaw.agent_coder import CoderAgent
-from drugclaw.skills.base import RetrievalResult
+from drugclaw.skills.base import AccessMode, RetrievalResult
 
 
 class _RegistryStub:
@@ -41,6 +42,7 @@ class _LLMShouldNotRun:
 class _SkillStub:
     name: str = "DemoSkill"
     config: Dict[str, Any] = None
+    access_mode: str = AccessMode.LOCAL_FILE
 
     def __post_init__(self) -> None:
         if self.config is None:
@@ -162,3 +164,42 @@ def test_generate_and_execute_can_use_direct_retrieve_strategy() -> None:
 
     assert result["per_skill"][skill.name]["strategy"] == "direct_retrieve"
     assert "Imatinib targets ABL1." in result["per_skill"][skill.name]["output"]
+
+
+def test_fallback_retrieve_skips_retrieve_py_for_rest_api_skills(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    skill = _SkillStub(name="RestSkill", access_mode=AccessMode.REST_API)
+    agent = CoderAgent(_LLMStub([]), _RegistryStub(skill))
+
+    skill_dir = tmp_path / "rest_skill"
+    skill_dir.mkdir()
+    (skill_dir / "skill_impl.py").write_text("# stub\n", encoding="utf-8")
+    (skill_dir / "retrieve.py").write_text(
+        "raise SystemExit('retrieve.py should not run for REST skills')\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("drugclaw.agent_coder.inspect.getfile", lambda cls: str(skill_dir / "skill_impl.py"))
+    monkeypatch.setattr(
+        "drugclaw.agent_coder.subprocess.run",
+        lambda *args, **kwargs: type(
+            "CompletedProcess",
+            (),
+            {"stdout": "retrieve.py output should not be used", "stderr": "", "returncode": 0},
+        )(),
+    )
+
+    output, error, records = agent._fallback_retrieve(
+        skill_name=skill.name,
+        entities={"drug": ["imatinib"]},
+        query="What does imatinib target?",
+        max_results=5,
+    )
+
+    assert error == ""
+    assert output != "retrieve.py output should not be used"
+    assert "Imatinib targets ABL1." in output
+    assert records
+    assert records[0]["target_entity"] == "ABL1"
