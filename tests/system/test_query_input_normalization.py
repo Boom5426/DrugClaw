@@ -150,6 +150,59 @@ class _StructuredResolverUnknownCanonicalStub:
         }
 
 
+class _StructuredResolverMixedSameDrugStub:
+    @classmethod
+    def default(cls, config):
+        return cls()
+
+    def resolve_query(self, query):
+        if "CHEMBL941" not in query:
+            return {
+                "original_query": query,
+                "normalized_query": query,
+                "status": "unresolved",
+                "detected_identifiers": [],
+                "resolved_records": [],
+                "errors": [],
+                "drug_mentions": [],
+                "rewrite_applied": False,
+            }
+
+        return {
+            "original_query": query,
+            "normalized_query": query.replace("CHEMBL941", "imatinib"),
+            "status": "resolved",
+            "detected_identifiers": [
+                {
+                    "type": "chembl_id",
+                    "raw_text": "CHEMBL941",
+                    "normalized_value": "CHEMBL941",
+                }
+            ],
+            "resolved_records": [
+                {
+                    "identifier_type": "chembl_id",
+                    "identifier_value": "CHEMBL941",
+                    "canonical_name": "imatinib",
+                    "source": "stub",
+                    "status": "resolved",
+                }
+            ],
+            "errors": [],
+            "drug_mentions": [
+                {
+                    "raw_text": "CHEMBL941",
+                    "mention_type": "chembl_id",
+                    "normalized_value": "CHEMBL941",
+                    "canonical_drug_name": "imatinib",
+                    "resolution_stage": "identifier",
+                    "source": "stub",
+                }
+            ],
+            "rewrite_applied": True,
+        }
+
+
 def test_query_normalizes_alias_before_planning_and_exposes_resolution(monkeypatch) -> None:
     planner_stub = _PlannerCaptureStub()
 
@@ -293,3 +346,61 @@ def test_query_keeps_identifier_resolved_canonical_when_alias_seed_does_not_know
     assert result["normalized_query"] == "What are the known drug targets of dasatinib?"
     assert result["resolved_entities"] == {"drug": ["dasatinib"]}
     assert result["input_resolution"]["canonical_drug_names"] == ["dasatinib"]
+
+
+def test_query_preserves_original_text_for_mixed_same_drug_mentions(monkeypatch) -> None:
+    planner_stub = _PlannerCaptureStub()
+
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(
+        main_system_module,
+        "StructuredInputResolver",
+        _StructuredResolverMixedSameDrugStub,
+        raising=False,
+    )
+    monkeypatch.setattr(main_system_module, "PlannerAgent", lambda *args, **kwargs: planner_stub)
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    query = "What does Gleevec (imatinib, CHEMBL941) target?"
+    result = system.query(query, thinking_mode="simple")
+
+    assert result["query"] == query
+    assert result["normalized_query"] == query
+    assert result["resolved_entities"] == {"drug": ["imatinib"]}
+    assert result["input_resolution"]["canonical_drug_names"] == ["imatinib"]
+    assert result["input_resolution"]["rewrite_applied"] is False
+    assert result["input_resolution"]["drug_mentions"] == [
+        {
+            "raw_text": "CHEMBL941",
+            "mention_type": "chembl_id",
+            "normalized_value": "CHEMBL941",
+            "canonical_drug_name": "imatinib",
+            "resolution_stage": "identifier",
+            "source": "stub",
+        },
+        {
+            "raw_text": "Gleevec",
+            "mention_type": "alias",
+            "canonical_drug_name": "imatinib",
+            "resolution_stage": "name",
+            "source": "alias_seed",
+        },
+        {
+            "raw_text": "imatinib",
+            "mention_type": "canonical_name",
+            "canonical_drug_name": "imatinib",
+            "resolution_stage": "name",
+            "source": "alias_seed",
+        },
+    ]
+    assert result["query_plan"]["entities"] == {"drug": ["imatinib"]}

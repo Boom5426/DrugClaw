@@ -1,0 +1,16 @@
+{
+  "package_id": "tarkg_target_profile",
+  "skill_name": "TarKG",
+  "dataset_bundle": [
+    "resources_metadata/dti/TarKG/tarkg.tsv"
+  ],
+  "protocol_docs": [
+    "resources_metadata/packages/tarkg_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/tarkg_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/dti/direct_targets_grounding.md"
+  ]
+}

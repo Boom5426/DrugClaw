@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -52,3 +53,17 @@ def test_requirements_txt_exists_and_readmes_document_one_shot_install() -> None
 
     assert "python -m pip install --no-build-isolation -r requirements.txt" in readme
     assert "python -m pip install --no-build-isolation -r requirements.txt" in readme_cn
+
+
+def test_resource_package_examples_exist_and_use_repo_relative_paths() -> None:
+    package_example = ROOT / "resources_metadata" / "packages" / "examples" / "minimal_package.json"
+    knowhow_example = ROOT / "resources_metadata" / "knowhow" / "examples" / "minimal_knowhow.md"
+
+    assert package_example.exists()
+    assert knowhow_example.exists()
+
+    payload = json.loads(package_example.read_text(encoding="utf-8"))
+    for key in ("dataset_bundle", "protocol_docs", "knowhow_docs"):
+        for value in payload.get(key, []):
+            assert not str(value).startswith("/")
+            assert ".." not in str(value)

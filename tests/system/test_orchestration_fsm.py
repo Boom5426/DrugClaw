@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import drugclaw.main_system as main_system_module
 from drugclaw.agent_retriever import RetrieverAgent
+from drugclaw.knowhow_models import KnowHowDocument
+from drugclaw.knowhow_registry import KnowHowRegistry
 from drugclaw.models import AgentState, ThinkingMode
 from drugclaw.query_plan import QueryPlan
 
@@ -104,6 +106,39 @@ class _ResourceRegistryStub:
 
     def get_resource(self, name):
         return self.entries.get(name)
+
+
+def _make_knowhow_registry() -> KnowHowRegistry:
+    return KnowHowRegistry.from_documents(
+        [
+            KnowHowDocument(
+                doc_id="direct_targets_grounding",
+                title="Direct target grounding",
+                task_types=["direct_targets"],
+                evidence_types=["database_record"],
+                declared_by_skills=["BindingDB", "DrugBank", "Open Targets Platform"],
+                risk_level="medium",
+                conflict_policy="Prefer direct binding evidence before association-only evidence.",
+                answer_template="direct_targets",
+                max_prompt_snippets=1,
+                body_path="",
+                body_text="Prioritize established direct binding evidence and keep association-only targets separate.",
+            ),
+            KnowHowDocument(
+                doc_id="mechanism_explanation",
+                title="Mechanism explanation",
+                task_types=["mechanism_of_action"],
+                evidence_types=["database_record"],
+                declared_by_skills=["Open Targets Platform"],
+                risk_level="medium",
+                conflict_policy="Mark mechanism claims as limited when direct support is thin.",
+                answer_template="mechanism_of_action",
+                max_prompt_snippets=1,
+                body_path="",
+                body_text="Explain mechanism after the direct target section and call out evidence limits.",
+            ),
+        ]
+    )
 
 
 def test_retriever_consumes_query_plan_when_present() -> None:
@@ -258,6 +293,148 @@ def test_retriever_filters_unavailable_skills_from_query_plan() -> None:
     assert "BindingDB" in updated.retrieved_text
     assert "TTD" not in updated.retrieved_text
     assert coder.last_skill_names == ["BindingDB"]
+
+
+def test_retriever_does_not_bypass_disabled_registry_entries_from_resource_filter() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What does imatinib target?",
+        resource_filter=["DeprecatedSkill", "BindingDB"],
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["DeprecatedSkill", "BindingDB"]),
+        coder_agent=coder,
+        resource_registry=_ResourceRegistryStub(
+            [
+                type("Entry", (), {"name": "DeprecatedSkill", "status": "disabled", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "BindingDB", "status": "ready", "access_mode": "REST_API"})(),
+            ]
+        ),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "BindingDB" in updated.retrieved_text
+    assert "DeprecatedSkill" not in updated.retrieved_text
+    assert coder.last_skill_names == ["BindingDB"]
+
+
+def test_retriever_skips_gateway_only_registry_entries_without_runtime_skill() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What does imatinib target?",
+        resource_filter=["GatewayOnly", "BindingDB"],
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB"]),
+        coder_agent=coder,
+        resource_registry=_ResourceRegistryStub(
+            [
+                type(
+                    "Entry",
+                    (),
+                    {
+                        "name": "GatewayOnly",
+                        "status": "ready",
+                        "access_mode": "GATEWAY",
+                        "gateway_declared": True,
+                        "gateway_ready": True,
+                    },
+                )(),
+                type(
+                    "Entry",
+                    (),
+                    {
+                        "name": "BindingDB",
+                        "status": "ready",
+                        "access_mode": "REST_API",
+                    },
+                )(),
+            ]
+        ),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "BindingDB" in updated.retrieved_text
+    assert "GatewayOnly" not in updated.retrieved_text
+    assert coder.last_skill_names == ["BindingDB"]
+
+
+def test_retriever_preserves_task_aware_knowhow_hints_for_composite_query_plan() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets and mechanism of action of imatinib?",
+        query_plan=QueryPlan(
+            question_type="mechanism",
+            entities={"drug": ["imatinib"]},
+            subquestions=[
+                "What are the established direct targets of imatinib?",
+                "What is the mechanism of action of imatinib?",
+            ],
+            preferred_skills=[
+                "BindingDB",
+                "Open Targets Platform",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Composite target plus mechanism plan."],
+            plan_type="composite_query",
+            primary_task={
+                "task_type": "direct_targets",
+                "task_id": "primary",
+                "question": "What are the established direct targets of imatinib?",
+                "entities": {"drug": ["imatinib"]},
+                "preferred_skills": ["BindingDB"],
+                "preferred_evidence_types": ["database_record"],
+                "answer_risk_level": "medium",
+            },
+            supporting_tasks=[
+                {
+                    "task_type": "mechanism_of_action",
+                    "task_id": "support_1",
+                    "question": "What is the mechanism of action of imatinib?",
+                    "entities": {"drug": ["imatinib"]},
+                    "preferred_skills": ["Open Targets Platform"],
+                    "preferred_evidence_types": ["database_record"],
+                    "answer_risk_level": "medium",
+                }
+            ],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB", "Open Targets Platform"]),
+        coder_agent=coder,
+        knowhow_registry=_make_knowhow_registry(),
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.query_plan is not None
+    assert updated.query_plan.primary_task is not None
+    assert updated.query_plan.primary_task.knowhow_doc_ids == [
+        "direct_targets_grounding"
+    ]
+    assert updated.query_plan.supporting_tasks[0].knowhow_doc_ids == [
+        "mechanism_explanation"
+    ]
+    assert any(
+        diagnostic.get("kind") == "knowhow"
+        and diagnostic.get("task_id") == "support_1"
+        and diagnostic.get("doc_id") == "mechanism_explanation"
+        and "Open Targets Platform" in diagnostic.get("declared_by_skills", [])
+        for diagnostic in updated.retrieval_diagnostics
+    )
+    assert coder.last_skill_names == ["BindingDB", "Open Targets Platform"]
 
 
 def test_retriever_prefers_deterministic_only_for_simple_target_lookup() -> None:
@@ -486,6 +663,34 @@ def test_retriever_resource_filter_prefers_resolved_alias_entities() -> None:
     assert coder.last_entities == {"drug": ["imatinib"]}
 
 
+def test_retriever_resource_filter_preserves_composite_query_plan_shape() -> None:
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB"]),
+        coder_agent=_CoderStub(),
+    )
+
+    plan = retriever._build_resource_filter_query_plan(
+        "What are the known drug targets and mechanism of action of imatinib?",
+        key_entities={"drug": ["imatinib"]},
+        resource_filter=["BindingDB"],
+    )
+
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "direct_targets"
+    assert plan.primary_task.preferred_skills == ["BindingDB"]
+    assert [task.task_type for task in plan.supporting_tasks] == [
+        "mechanism_of_action"
+    ]
+    assert plan.supporting_tasks[0].preferred_skills == ["BindingDB"]
+    assert plan.preferred_skills == ["BindingDB"]
+    assert plan.subquestions == [
+        "What are the established direct targets of imatinib?",
+        "What is the mechanism of action of imatinib?",
+    ]
+
+
 def test_retriever_enriches_empty_planner_query_plan_when_resource_filter_is_present() -> None:
     coder = _CoderStub()
     state = AgentState(
@@ -607,8 +812,8 @@ def test_retriever_prioritizes_ready_remote_skills_for_fallback() -> None:
     updated = retriever.execute(state)
 
     assert "ChEMBL" in updated.retrieved_text
-    assert "Open Targets Platform" in updated.retrieved_text
     assert "DGIdb" in updated.retrieved_text
+    assert "Open Targets Platform" in updated.retrieved_text
     assert "TTD" not in updated.retrieved_text
     assert "TarKG" not in updated.retrieved_text
     assert coder.last_skill_names == ["ChEMBL", "DGIdb", "Open Targets Platform"]
@@ -683,9 +888,15 @@ def test_retriever_narrows_target_lookup_to_primary_dti_sources() -> None:
     assert "BindingDB" in updated.retrieved_text
     assert "ChEMBL" in updated.retrieved_text
     assert "DGIdb" in updated.retrieved_text
+    assert "Open Targets Platform" in updated.retrieved_text
     assert "Molecular Targets" not in updated.retrieved_text
     assert "DRUGMECHDB" not in updated.retrieved_text
-    assert coder.last_skill_names == ["BindingDB", "ChEMBL", "DGIdb"]
+    assert coder.last_skill_names == [
+        "BindingDB",
+        "ChEMBL",
+        "DGIdb",
+        "Open Targets Platform",
+    ]
 
 
 def test_retriever_prefers_explicit_plan_skills_without_padding_unrelated_suggestions() -> None:

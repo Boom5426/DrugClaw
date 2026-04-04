@@ -63,6 +63,26 @@ def test_query_request_defaults_mode_to_none() -> None:
     assert request.mode is None
 
 
+def test_gateway_invoke_request_validation() -> None:
+    from drugclaw.server_models import GatewayInvokeRequest
+
+    with pytest.raises(Exception):
+        GatewayInvokeRequest(resource_name="", tool_namespace="")
+
+    with pytest.raises(Exception):
+        GatewayInvokeRequest(tool_namespace="open_targets.platform", timeout_seconds=0)
+
+    request = GatewayInvokeRequest(
+        tool_namespace="open_targets.platform",
+        query="{ target { id } }",
+        variables={"id": "ENSG000001"},
+    )
+
+    assert request.tool_namespace == "open_targets.platform"
+    assert request.resource_name is None
+    assert request.variables == {"id": "ENSG000001"}
+
+
 @pytest.mark.anyio
 async def test_health_endpoint() -> None:
     async with _make_client(_RuntimeStub()) as client:
@@ -136,6 +156,44 @@ async def test_query_endpoint_uses_runtime_default_mode_when_omitted() -> None:
 
 
 @pytest.mark.anyio
+async def test_gateway_invoke_endpoint() -> None:
+    async with _make_client(_RuntimeStub()) as client:
+        response = await _request(
+            client,
+            "post",
+            "/api/gateways/invoke",
+            json={
+                "tool_namespace": "open_targets.platform",
+                "query": "{ target { id } }",
+                "variables": {"id": "ENSG000001"},
+                "timeout_seconds": 4.5,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["resource_name"] == "Open Targets Platform"
+    assert body["tool_namespace"] == "open_targets.platform"
+    assert body["data"] == {"data": {"target": {"id": "ENSG000001"}}}
+
+
+@pytest.mark.anyio
+async def test_gateway_invoke_endpoint_returns_bad_request_for_runtime_validation_errors() -> None:
+    runtime = _RuntimeStub()
+    runtime.gateway_error = "unknown gateway"
+    async with _make_client(runtime) as client:
+        response = await _request(
+            client,
+            "post",
+            "/api/gateways/invoke",
+            json={"resource_name": "Missing Gateway"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "unknown gateway"
+
+
+@pytest.mark.anyio
 async def test_query_detail_endpoint() -> None:
     async with _make_client(_RuntimeStub()) as client:
         response = await _request(client, "get", "/api/queries/query_1")
@@ -170,6 +228,8 @@ class _RuntimeStub:
             {"SERVER_DEFAULT_MODE": default_mode},
         )()
         self.calls = []
+        self.gateway_calls = []
+        self.gateway_error = ""
 
     def health(self):
         return {
@@ -211,3 +271,34 @@ class _RuntimeStub:
 
     def get_query_report(self, query_id):
         return "# DrugClaw Query Report\n\nreport"
+
+    def invoke_gateway(
+        self,
+        *,
+        resource_name="",
+        tool_namespace="",
+        path="",
+        params=None,
+        query="",
+        variables=None,
+        timeout_seconds=10.0,
+    ):
+        if self.gateway_error:
+            raise ValueError(self.gateway_error)
+        self.gateway_calls.append(
+            {
+                "resource_name": resource_name,
+                "tool_namespace": tool_namespace,
+                "path": path,
+                "params": params,
+                "query": query,
+                "variables": variables,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return {
+            "resource_name": "Open Targets Platform",
+            "tool_namespace": tool_namespace,
+            "transport": "graphql",
+            "data": {"data": {"target": {"id": variables["id"]}}},
+        }

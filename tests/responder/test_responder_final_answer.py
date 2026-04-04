@@ -4,6 +4,7 @@ from drugclaw.claim_assessment import ClaimAssessment
 from drugclaw.agent_responder import ResponderAgent
 from drugclaw.evidence import EvidenceItem
 from drugclaw.models import AgentState
+from drugclaw.query_plan import QueryPlan
 
 
 class _LLMStub:
@@ -662,6 +663,329 @@ def test_responder_filters_target_lookup_noise_and_renders_target_summary() -> N
     assert "leukemia" not in updated.current_answer
 
 
+def test_responder_separates_established_direct_targets_from_association_only_signals() -> None:
+    responder = ResponderAgent(_LLMStub())
+    state = AgentState(original_query="What are the known drug targets of imatinib?")
+    state.query_plan = QueryPlan(
+        question_type="target_lookup",
+        entities={"drug": ["imatinib"]},
+        subquestions=["What are the established direct targets of imatinib?"],
+        preferred_skills=["BindingDB", "ChEMBL", "DGIdb", "Open Targets Platform"],
+        preferred_evidence_types=["database_record"],
+        requires_graph_reasoning=False,
+        requires_prediction_sources=False,
+        requires_web_fallback=False,
+        answer_risk_level="medium",
+        notes=["Direct target query."],
+        plan_type="single_task",
+        primary_task={
+            "task_type": "direct_targets",
+            "question": "What are the established direct targets of imatinib?",
+            "entities": {"drug": ["imatinib"]},
+            "preferred_skills": ["BindingDB", "ChEMBL", "DGIdb", "Open Targets Platform"],
+            "preferred_evidence_types": ["database_record"],
+            "requires_graph_reasoning": False,
+            "requires_prediction_sources": False,
+            "requires_web_fallback": False,
+            "answer_risk_level": "medium",
+            "notes": ["Separate direct targets from weaker associations."],
+        },
+    )
+    state.evidence_items = [
+        _make_evidence_item(
+            evidence_id="B1",
+            source_skill="BindingDB",
+            claim="imatinib targets ABL1",
+            snippet="imatinib Ki=21 nM against ABL1",
+            relationship="targets",
+            source_entity="imatinib",
+            target_entity="ABL1",
+            retrieval_score=0.96,
+        ),
+        _make_evidence_item(
+            evidence_id="C1",
+            source_skill="ChEMBL",
+            claim="imatinib targets KIT",
+            snippet="imatinib IC50=100 nM against KIT",
+            relationship="binds_ic50",
+            source_entity="imatinib",
+            target_entity="KIT",
+            retrieval_score=0.94,
+        ),
+        _make_evidence_item(
+            evidence_id="D1",
+            source_skill="DGIdb",
+            claim="imatinib targets PDGFRB",
+            snippet="DGIdb: imatinib inhibitor PDGFRB",
+            relationship="inhibitor",
+            source_entity="imatinib",
+            target_entity="PDGFRB",
+            retrieval_score=0.84,
+        ),
+        _make_evidence_item(
+            evidence_id="OT1",
+            source_skill="Open Targets Platform",
+            claim="IMATINIB inhibitor BCR activator of RhoGEF and GTPase",
+            snippet="IMATINIB inhibitor BCR activator of RhoGEF and GTPase",
+            relationship="inhibitor",
+            source_entity="IMATINIB",
+            target_entity="BCR activator of RhoGEF and GTPase",
+            retrieval_score=0.80,
+        ),
+    ]
+
+    updated = responder.execute_simple(state)
+
+    assert "Established Direct Targets:" in updated.current_answer
+    assert "Association-Only Signals:" in updated.current_answer
+    established_block = updated.current_answer.split("Association-Only Signals:")[0]
+    association_block = updated.current_answer.split("Association-Only Signals:")[1]
+    assert "ABL1" in established_block
+    assert "KIT" in established_block
+    assert "PDGFRB" not in established_block
+    assert "BCR" not in established_block
+    assert "PDGFRB" in association_block
+    assert "BCR" in association_block
+
+
+def test_responder_renders_composite_query_with_summary_and_ordered_sections() -> None:
+    responder = ResponderAgent(_LLMStub())
+    state = AgentState(
+        original_query="What are the known drug targets and mechanism of action of imatinib?"
+    )
+    state.query_plan = QueryPlan(
+        question_type="mechanism",
+        entities={"drug": ["imatinib"]},
+        subquestions=[
+            "What are the established direct targets of imatinib?",
+            "What is the mechanism of action of imatinib?",
+        ],
+        preferred_skills=["BindingDB", "ChEMBL", "Open Targets Platform", "DRUGMECHDB"],
+        preferred_evidence_types=["database_record"],
+        requires_graph_reasoning=False,
+        requires_prediction_sources=False,
+        requires_web_fallback=True,
+        answer_risk_level="medium",
+        notes=["Composite targets plus mechanism query."],
+        plan_type="composite_query",
+        primary_task={
+            "task_type": "direct_targets",
+            "question": "What are the established direct targets of imatinib?",
+            "entities": {"drug": ["imatinib"]},
+            "preferred_skills": ["BindingDB", "ChEMBL"],
+            "preferred_evidence_types": ["database_record"],
+            "requires_graph_reasoning": False,
+            "requires_prediction_sources": False,
+            "requires_web_fallback": False,
+            "answer_risk_level": "medium",
+            "notes": ["Lead with direct targets."],
+        },
+        supporting_tasks=[
+            {
+                "task_type": "mechanism_of_action",
+                "question": "What is the mechanism of action of imatinib?",
+                "entities": {"drug": ["imatinib"]},
+                "preferred_skills": ["Open Targets Platform", "DRUGMECHDB"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": True,
+                "answer_risk_level": "medium",
+                "notes": ["Mechanism section."],
+            }
+        ],
+        answer_contract={
+            "summary_style": "direct_answer_first",
+            "section_order": [
+                "summary",
+                "direct_targets",
+                "mechanism_of_action",
+                "limitations",
+            ],
+        },
+    )
+    state.evidence_items = [
+        _make_evidence_item(
+            evidence_id="B1",
+            source_skill="BindingDB",
+            claim="imatinib targets ABL1",
+            snippet="imatinib Ki=21 nM against ABL1",
+            relationship="targets",
+            source_entity="imatinib",
+            target_entity="ABL1",
+            retrieval_score=0.96,
+        ),
+        _make_evidence_item(
+            evidence_id="B2",
+            source_skill="BindingDB",
+            claim="imatinib targets KIT",
+            snippet="imatinib IC50=100 nM against KIT",
+            relationship="targets",
+            source_entity="imatinib",
+            target_entity="KIT",
+            retrieval_score=0.94,
+        ),
+        _make_evidence_item(
+            evidence_id="M1",
+            source_skill="Open Targets Platform",
+            claim="imatinib mechanism ABL signaling inhibition",
+            snippet="Imatinib inhibits BCR-ABL tyrosine kinase signaling.",
+            relationship="mechanism",
+            source_entity="imatinib",
+            target_entity="ABL signaling inhibition",
+            retrieval_score=0.83,
+            structured_payload={"mechanism_of_action": "BCR-ABL tyrosine kinase inhibition"},
+            metadata={"mechanism_of_action": "BCR-ABL tyrosine kinase inhibition"},
+        ),
+    ]
+
+    updated = responder.execute_simple(state)
+
+    assert "Short Answer:" in updated.current_answer
+    assert "Established Direct Targets:" in updated.current_answer
+    assert "Mechanism Coverage:" in updated.current_answer
+    assert "Targets Supported:" not in updated.current_answer
+    assert updated.current_answer.index("Established Direct Targets:") < updated.current_answer.index(
+        "Mechanism Coverage:"
+    )
+
+
+def test_responder_renders_task_aware_knowhow_guidance_from_query_plan() -> None:
+    responder = ResponderAgent(_LLMStub())
+    state = AgentState(
+        original_query="What are the known drug targets and mechanism of action of imatinib?"
+    )
+    state.query_plan = QueryPlan(
+        question_type="mechanism",
+        entities={"drug": ["imatinib"]},
+        subquestions=[
+            "What are the established direct targets of imatinib?",
+            "What is the mechanism of action of imatinib?",
+        ],
+        preferred_skills=["BindingDB", "Open Targets Platform"],
+        preferred_evidence_types=["database_record"],
+        requires_graph_reasoning=False,
+        requires_prediction_sources=False,
+        requires_web_fallback=True,
+        answer_risk_level="medium",
+        notes=["Composite targets plus mechanism query."],
+        knowhow_doc_ids=["direct_targets_grounding", "mechanism_explanation"],
+        knowhow_hints=[
+            {
+                "doc_id": "direct_targets_grounding",
+                "title": "Direct target grounding",
+                "task_id": "primary",
+                "task_type": "direct_targets",
+                "snippet": "Prioritize established direct binding evidence and separate association-only target claims.",
+                "risk_level": "medium",
+                "evidence_types": ["database_record"],
+                "declared_by_skills": ["BindingDB", "DrugBank", "Open Targets Platform"],
+            },
+            {
+                "doc_id": "mechanism_explanation",
+                "title": "Mechanism explanation",
+                "task_id": "support_1",
+                "task_type": "mechanism_of_action",
+                "snippet": "Explain mechanism after the direct target section and call out evidence limits explicitly.",
+                "risk_level": "medium",
+                "evidence_types": ["database_record"],
+                "declared_by_skills": ["Open Targets Platform"],
+            },
+        ],
+        plan_type="composite_query",
+        primary_task={
+            "task_type": "direct_targets",
+            "task_id": "primary",
+            "question": "What are the established direct targets of imatinib?",
+            "entities": {"drug": ["imatinib"]},
+            "preferred_skills": ["BindingDB"],
+            "preferred_evidence_types": ["database_record"],
+            "answer_risk_level": "medium",
+            "knowhow_doc_ids": ["direct_targets_grounding"],
+            "knowhow_hints": [
+                {
+                    "doc_id": "direct_targets_grounding",
+                    "title": "Direct target grounding",
+                    "task_id": "primary",
+                    "task_type": "direct_targets",
+                    "snippet": "Prioritize established direct binding evidence and separate association-only target claims.",
+                    "risk_level": "medium",
+                    "evidence_types": ["database_record"],
+                    "declared_by_skills": ["BindingDB", "DrugBank", "Open Targets Platform"],
+                }
+            ],
+        },
+        supporting_tasks=[
+            {
+                "task_type": "mechanism_of_action",
+                "task_id": "support_1",
+                "question": "What is the mechanism of action of imatinib?",
+                "entities": {"drug": ["imatinib"]},
+                "preferred_skills": ["Open Targets Platform"],
+                "preferred_evidence_types": ["database_record"],
+                "answer_risk_level": "medium",
+                "knowhow_doc_ids": ["mechanism_explanation"],
+                "knowhow_hints": [
+                    {
+                        "doc_id": "mechanism_explanation",
+                        "title": "Mechanism explanation",
+                        "task_id": "support_1",
+                        "task_type": "mechanism_of_action",
+                        "snippet": "Explain mechanism after the direct target section and call out evidence limits explicitly.",
+                        "risk_level": "medium",
+                        "evidence_types": ["database_record"],
+                        "declared_by_skills": ["Open Targets Platform"],
+                    }
+                ],
+            }
+        ],
+        answer_contract={
+            "summary_style": "direct_answer_first",
+            "section_order": [
+                "summary",
+                "direct_targets",
+                "mechanism_of_action",
+                "limitations",
+            ],
+        },
+    )
+    state.evidence_items = [
+        _make_evidence_item(
+            evidence_id="B1",
+            source_skill="BindingDB",
+            claim="imatinib targets ABL1",
+            snippet="imatinib Ki=21 nM against ABL1",
+            relationship="targets",
+            source_entity="imatinib",
+            target_entity="ABL1",
+            retrieval_score=0.96,
+        ),
+        _make_evidence_item(
+            evidence_id="M1",
+            source_skill="Open Targets Platform",
+            claim="imatinib mechanism ABL signaling inhibition",
+            snippet="Imatinib inhibits BCR-ABL tyrosine kinase signaling.",
+            relationship="mechanism",
+            source_entity="imatinib",
+            target_entity="ABL signaling inhibition",
+            retrieval_score=0.83,
+            structured_payload={"mechanism_of_action": "BCR-ABL tyrosine kinase inhibition"},
+            metadata={"mechanism_of_action": "BCR-ABL tyrosine kinase inhibition"},
+        ),
+    ]
+
+    updated = responder.execute_simple(state)
+
+    assert updated.final_answer_structured is not None
+    assert "Evidence interpretation guidance:" in updated.current_answer
+    assert "Direct target grounding [BindingDB, DrugBank, Open Targets Platform]:" in updated.current_answer
+    assert "Mechanism explanation [Open Targets Platform]:" in updated.current_answer
+    assert updated.final_answer_structured.diagnostics["knowhow_doc_ids"] == [
+        "direct_targets_grounding",
+        "mechanism_explanation",
+    ]
+
+
 def test_responder_deduplicates_repeated_limitations() -> None:
     responder = ResponderAgent(_LLMStub())
     state = AgentState(original_query="What are the known drug targets of imatinib?")
@@ -928,6 +1252,182 @@ def test_responder_keeps_target_like_inhibitor_evidence_in_target_summary() -> N
         for claim in updated.final_answer_structured.key_claims
         for evidence_id in claim.evidence_ids
     )
+
+
+def test_responder_collapses_duplicate_direct_target_sections_from_malformed_composite_plan() -> None:
+    responder = ResponderAgent(_LLMStub())
+    state = AgentState(original_query="What does imatinib target?")
+    state.query_plan = QueryPlan(
+        question_type="target_lookup",
+        entities={"drug": ["imatinib"]},
+        subquestions=["What are the established direct targets of imatinib?"],
+        preferred_skills=["BindingDB", "ChEMBL", "DGIdb"],
+        preferred_evidence_types=["database_record"],
+        requires_graph_reasoning=False,
+        requires_prediction_sources=False,
+        requires_web_fallback=False,
+        answer_risk_level="medium",
+        notes=["Malformed composite target-only plan."],
+        plan_type="composite_query",
+        primary_task={
+            "task_type": "direct_targets",
+            "question": "What are the established direct targets of imatinib?",
+            "entities": {"drug": ["imatinib"]},
+            "preferred_skills": ["BindingDB", "ChEMBL"],
+        },
+        supporting_tasks=[
+            {"task_type": "direct_targets", "question": "Repeat direct targets."},
+            {"task_type": "target_profile", "question": "Broader target profile."},
+        ],
+        answer_contract={
+            "summary_style": "direct_answer_first",
+            "section_order": [
+                "summary",
+                "direct_targets",
+                "direct_targets",
+                "target_profile",
+                "limitations",
+            ],
+        },
+    )
+    state.evidence_items = [
+        _make_evidence_item(
+            evidence_id="B1",
+            source_skill="BindingDB",
+            claim="imatinib targets ABL1",
+            snippet="BindingDB: imatinib targets ABL1",
+            relationship="targets",
+            source_entity="imatinib",
+            target_entity="ABL1",
+        ),
+        _make_evidence_item(
+            evidence_id="B2",
+            source_skill="BindingDB",
+            claim="imatinib targets KIT",
+            snippet="BindingDB: imatinib targets KIT",
+            relationship="targets",
+            source_entity="imatinib",
+            target_entity="KIT",
+        ),
+        _make_evidence_item(
+            evidence_id="D1",
+            source_skill="DGIdb",
+            claim="imatinib targets PDGFRB",
+            snippet="DGIdb: imatinib inhibitor PDGFRB",
+            relationship="targets",
+            source_entity="imatinib",
+            target_entity="PDGFRB",
+        ),
+    ]
+
+    updated = responder.execute_simple(state)
+
+    assert updated.current_answer.count("Established Direct Targets:") == 1
+    assert updated.current_answer.count("Association-Only Signals:") == 1
+    assert "Short Answer:" not in updated.current_answer
+
+
+def test_responder_separates_core_direct_targets_from_additional_direct_activity_hits() -> None:
+    responder = ResponderAgent(_LLMStub())
+    state = AgentState(original_query="What are the known drug targets of imatinib?")
+    state.query_plan = QueryPlan(
+        question_type="target_lookup",
+        entities={"drug": ["imatinib"]},
+        subquestions=["What are the established direct targets of imatinib?"],
+        preferred_skills=["BindingDB", "ChEMBL", "Open Targets Platform"],
+        preferred_evidence_types=["database_record"],
+        requires_graph_reasoning=False,
+        requires_prediction_sources=False,
+        requires_web_fallback=False,
+        answer_risk_level="medium",
+        notes=["Direct target query."],
+        plan_type="single_task",
+        primary_task={
+            "task_type": "direct_targets",
+            "question": "What are the established direct targets of imatinib?",
+            "entities": {"drug": ["imatinib"]},
+            "preferred_skills": ["BindingDB", "ChEMBL", "Open Targets Platform"],
+        },
+    )
+    state.evidence_items = [
+        _make_evidence_item(
+            evidence_id="B1",
+            source_skill="BindingDB",
+            claim="imatinib targets ABL1",
+            snippet="BindingDB: imatinib binds ABL1",
+            relationship="targets",
+            source_entity="imatinib",
+            target_entity="ABL1",
+        ),
+        _make_evidence_item(
+            evidence_id="B2",
+            source_skill="BindingDB",
+            claim="imatinib targets KIT",
+            snippet="BindingDB: imatinib binds KIT",
+            relationship="targets",
+            source_entity="imatinib",
+            target_entity="KIT",
+        ),
+        _make_evidence_item(
+            evidence_id="C1",
+            source_skill="ChEMBL",
+            claim="IMATINIB has_ic50_activity Platelet-derived growth factor receptor alpha",
+            snippet="Imatinib IC50 = 85 nM against PDGFRA",
+            relationship="has_ic50_activity",
+            source_entity="IMATINIB",
+            target_entity="Platelet-derived growth factor receptor alpha",
+        ),
+        _make_evidence_item(
+            evidence_id="C2",
+            source_skill="ChEMBL",
+            claim="IMATINIB has_ic50_activity Receptor-type tyrosine-protein kinase FLT3",
+            snippet="Imatinib IC50 = 120 nM against FLT3",
+            relationship="has_ic50_activity",
+            source_entity="IMATINIB",
+            target_entity="Receptor-type tyrosine-protein kinase FLT3",
+        ),
+        _make_evidence_item(
+            evidence_id="C3",
+            source_skill="ChEMBL",
+            claim="IMATINIB has_ic50_activity Proto-oncogene tyrosine-protein kinase Src",
+            snippet="Imatinib IC50 = 150 nM against SRC",
+            relationship="has_ic50_activity",
+            source_entity="IMATINIB",
+            target_entity="Proto-oncogene tyrosine-protein kinase Src",
+        ),
+    ]
+
+    updated = responder.execute_simple(state)
+
+    assert "Established Direct Targets:" in updated.current_answer
+    assert "Additional Direct Activity Hits:" in updated.current_answer
+    established_block = updated.current_answer.split("Established Direct Targets:", 1)[1].split(
+        "Additional Direct Activity Hits:",
+        1,
+    )[0]
+    additional_block = updated.current_answer.split("Additional Direct Activity Hits:", 1)[1].split(
+        "Association-Only Signals:",
+        1,
+    )[0]
+    assert "ABL1" in established_block
+    assert "KIT" in established_block
+    assert "PDGFRA" in established_block
+    assert "FLT3" not in established_block
+    assert "SRC" not in established_block
+    assert "FLT3" in additional_block
+    assert "SRC" in additional_block
+
+
+def test_responder_normalizes_target_labels_without_emitting_fragment_tokens() -> None:
+    assert ResponderAgent._normalize_target_label(
+        "Cytochrome P450 family 17 subfamily A member 1"
+    ) == "Cytochrome P450 family 17 subfamily A member 1"
+    assert ResponderAgent._normalize_target_label(
+        "Protein kinase C alpha type"
+    ) == "Protein kinase C alpha type"
+    assert ResponderAgent._normalize_target_label(
+        "Proto-oncogene tyrosine-protein kinase Src"
+    ) == "SRC"
 
 
 def test_responder_semanticizes_ddi_claims_instead_of_exposing_raw_kegg_ids() -> None:

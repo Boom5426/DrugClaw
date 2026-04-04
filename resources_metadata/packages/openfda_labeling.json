@@ -1,0 +1,20 @@
+{
+  "package_id": "openfda_labeling",
+  "skill_name": "openFDA Human Drug",
+  "protocol_docs": [
+    "resources_metadata/packages/openfda_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/openfda_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/drug_labeling/labeling_regulatory_priority.md"
+  ],
+  "gateway": {
+    "transport": "rest_api",
+    "endpoint": "https://api.fda.gov/drug/label.json",
+    "tool_namespace": "openfda.human_drug.labeling",
+    "docs_url": "https://open.fda.gov/apis/drug/label/",
+    "read_only": true
+  }
+}

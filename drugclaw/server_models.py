@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .models import ThinkingMode
 
@@ -69,3 +69,35 @@ class ResourceSummaryResponse(BaseModel):
     total_resources: int
     enabled_resources: int
     resources: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class GatewayInvokeRequest(BaseModel):
+    resource_name: str | None = None
+    tool_namespace: str | None = None
+    path: str = ""
+    params: dict[str, Any] = Field(default_factory=dict)
+    query: str = ""
+    variables: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: float = 10.0
+
+    @field_validator("resource_name", "tool_namespace", "path", "query")
+    @classmethod
+    def _normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def _validate_timeout_seconds(cls, value: float) -> float:
+        timeout = float(value)
+        if timeout <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        return timeout
+
+    @model_validator(mode="after")
+    def _validate_identifier(self) -> "GatewayInvokeRequest":
+        if not self.resource_name and not self.tool_namespace:
+            raise ValueError("resource_name or tool_namespace is required")
+        return self

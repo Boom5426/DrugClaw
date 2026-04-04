@@ -1,0 +1,20 @@
+{
+  "package_id": "faers_safety",
+  "skill_name": "FAERS",
+  "protocol_docs": [
+    "resources_metadata/packages/faers_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/faers_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/adr/adr_signal_tiering.md"
+  ],
+  "gateway": {
+    "transport": "rest_api",
+    "endpoint": "https://api.fda.gov/drug/event.json",
+    "tool_namespace": "openfda.human_drug.faers",
+    "docs_url": "https://open.fda.gov/apis/drug/event/",
+    "read_only": true
+  }
+}

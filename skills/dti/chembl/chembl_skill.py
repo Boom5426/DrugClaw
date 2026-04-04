@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
@@ -103,15 +104,19 @@ class ChEMBLSkill(CLISkillMixin, RAGSkill):
                 mol_name = mol.get("pref_name") or drug
 
                 # Fetch activities
+                raw_limit = min(max(max_results * 4, 40), 100)
                 acts = activity.filter(
                     molecule_chembl_id=chembl_id
                 ).only([
                     "target_pref_name", "standard_type",
                     "standard_value", "standard_units",
                     "target_chembl_id", "assay_chembl_id",
-                ])[: min(max_results - len(results), 20)]
+                ])[:raw_limit]
 
-                for act in acts:
+                for act in self._select_ranked_activities(
+                    list(acts),
+                    limit=max_results - len(results),
+                ):
                     target_name = act.get("target_pref_name") or act.get(
                         "target_chembl_id", ""
                     )
@@ -189,10 +194,11 @@ class ChEMBLSkill(CLISkillMixin, RAGSkill):
     def _rest_get_activities(
         self, chembl_id: str, limit: int
     ) -> List[RetrievalResult]:
+        raw_limit = min(max(limit * 4, 40), 100)
         url = (
             f"{_BASE}/activity.json"
             f"?molecule_chembl_id={chembl_id}"
-            f"&limit={min(limit, 20)}"
+            f"&limit={raw_limit}"
             f"&format=json"
         )
         try:
@@ -203,7 +209,7 @@ class ChEMBLSkill(CLISkillMixin, RAGSkill):
             return []
 
         results: List[RetrievalResult] = []
-        for act in data.get("activities", []):
+        for act in self._select_ranked_activities(data.get("activities", []), limit=limit):
             target_name = act.get("target_pref_name") or act.get(
                 "target_chembl_id", ""
             )
@@ -236,3 +242,75 @@ class ChEMBLSkill(CLISkillMixin, RAGSkill):
                 },
             ))
         return results
+
+    @classmethod
+    def _select_ranked_activities(
+        cls,
+        activities: List[Dict[str, Any]],
+        *,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        if limit <= 0 or not activities:
+            return []
+
+        best_by_target: Dict[str, Dict[str, Any]] = {}
+        for activity in activities:
+            target_name = str(
+                activity.get("target_pref_name") or activity.get("target_chembl_id") or ""
+            ).strip()
+            if not target_name:
+                continue
+            target_key = target_name.lower()
+            existing = best_by_target.get(target_key)
+            if existing is None or cls._activity_sort_key(activity) < cls._activity_sort_key(existing):
+                best_by_target[target_key] = activity
+
+        ranked = sorted(best_by_target.values(), key=cls._activity_sort_key)
+        return ranked[:limit]
+
+    @classmethod
+    def _activity_sort_key(cls, activity: Dict[str, Any]) -> tuple[Any, ...]:
+        activity_type = str(activity.get("standard_type") or "").strip().upper()
+        target_name = str(
+            activity.get("target_pref_name") or activity.get("target_chembl_id") or ""
+        ).strip()
+        target_priority = cls._target_name_priority(target_name)
+        activity_priority = {
+            "KI": 0,
+            "KD": 0,
+            "IC50": 1,
+            "EC50": 2,
+            "POTENCY": 3,
+        }.get(activity_type, 9)
+        value = cls._coerce_numeric(activity.get("standard_value"))
+        potency_value = value if value is not None and value > 0 else math.inf
+        return (
+            activity_priority,
+            target_priority,
+            potency_value,
+            target_name.lower(),
+        )
+
+    @staticmethod
+    def _target_name_priority(target_name: str) -> int:
+        lowered = str(target_name or "").strip().lower()
+        if not lowered:
+            return 9
+        generic_family_names = {
+            "platelet-derived growth factor receptor",
+            "protein kinase c alpha type",
+            "protein kinase c delta type",
+            "camp-dependent protein kinase (pka)",
+        }
+        if lowered in generic_family_names:
+            return 5
+        return 0
+
+    @staticmethod
+    def _coerce_numeric(value: Any) -> float | None:
+        try:
+            if value is None or value == "":
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None

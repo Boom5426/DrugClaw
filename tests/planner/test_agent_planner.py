@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from drugclaw.agent_planner import PlannerAgent
+from drugclaw.knowhow_models import KnowHowDocument
+from drugclaw.knowhow_registry import KnowHowRegistry
 from drugclaw.query_plan import build_fallback_query_plan, is_direct_target_lookup
 from drugclaw.resource_registry import ResourceEntry, ResourceRegistry
 
@@ -25,6 +27,39 @@ class _LLMStub:
         if self.error is not None:
             raise self.error
         return self.payload
+
+
+def _make_knowhow_registry() -> KnowHowRegistry:
+    return KnowHowRegistry.from_documents(
+        [
+            KnowHowDocument(
+                doc_id="direct_targets_grounding",
+                title="Direct target grounding",
+                task_types=["direct_targets"],
+                evidence_types=["database_record"],
+                declared_by_skills=["BindingDB", "DrugBank", "Open Targets Platform"],
+                risk_level="medium",
+                conflict_policy="Prefer direct binding evidence before association-only evidence.",
+                answer_template="direct_targets",
+                max_prompt_snippets=1,
+                body_path="",
+                body_text="Prioritize established direct binding evidence and separate association-only target claims.",
+            ),
+            KnowHowDocument(
+                doc_id="mechanism_explanation",
+                title="Mechanism explanation",
+                task_types=["mechanism_of_action"],
+                evidence_types=["database_record"],
+                declared_by_skills=["Open Targets Platform"],
+                risk_level="medium",
+                conflict_policy="Mark mechanism claims as hypothesis when direct support is thin.",
+                answer_template="mechanism_of_action",
+                max_prompt_snippets=1,
+                body_path="",
+                body_text="Explain mechanism after the direct target section and call out evidence limits explicitly.",
+            ),
+        ]
+    )
 
 
 def test_fallback_query_plan_is_conservative() -> None:
@@ -84,6 +119,40 @@ def test_fallback_query_plan_prefers_mechanism_for_target_plus_moa_query() -> No
     ]
 
 
+def test_fallback_query_plan_builds_composite_plan_for_targets_plus_moa_query() -> None:
+    plan = build_fallback_query_plan(
+        "What are the known drug targets and mechanism of action of imatinib?"
+    )
+
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "direct_targets"
+    assert [task.task_type for task in plan.supporting_tasks] == [
+        "mechanism_of_action"
+    ]
+    assert plan.answer_contract is not None
+    assert plan.answer_contract.section_order[:3] == [
+        "summary",
+        "direct_targets",
+        "mechanism_of_action",
+    ]
+
+
+def test_fallback_query_plan_builds_single_task_direct_targets_plan() -> None:
+    plan = build_fallback_query_plan("What are the known drug targets of imatinib?")
+
+    assert plan.plan_type == "single_task"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "direct_targets"
+    assert plan.question_type == "target_lookup"
+    assert plan.primary_task.preferred_skills == [
+        "BindingDB",
+        "ChEMBL",
+        "DGIdb",
+        "Open Targets Platform",
+    ]
+
+
 def test_planner_classifies_direct_target_lookup_without_graph() -> None:
     plan = PlannerAgent(_LLMStub()).plan("What does imatinib target?")
 
@@ -91,8 +160,304 @@ def test_planner_classifies_direct_target_lookup_without_graph() -> None:
     assert plan.requires_graph_reasoning is False
 
 
+def test_planner_normalizes_v2_payload_into_primary_and_supporting_tasks() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "plan_type": "composite_query",
+                "primary_task": {
+                    "task_type": "direct_targets",
+                    "question": "What are the established direct targets of imatinib?",
+                    "entities": {"drug": ["imatinib"]},
+                    "preferred_skills": ["BindingDB", "ChEMBL"],
+                    "preferred_evidence_types": ["database_record"],
+                    "requires_graph_reasoning": False,
+                    "requires_prediction_sources": False,
+                    "requires_web_fallback": False,
+                    "answer_risk_level": "medium",
+                    "notes": ["Use direct binding resources first."],
+                },
+                "supporting_tasks": [
+                    {
+                        "task_type": "mechanism_of_action",
+                        "question": "What is the mechanism of action of imatinib?",
+                        "entities": {"drug": ["imatinib"]},
+                        "preferred_skills": ["Open Targets Platform", "DRUGMECHDB"],
+                        "preferred_evidence_types": ["database_record"],
+                        "requires_graph_reasoning": False,
+                        "requires_prediction_sources": False,
+                        "requires_web_fallback": True,
+                        "answer_risk_level": "medium",
+                        "notes": ["Add mechanism coverage as supporting context."],
+                    }
+                ],
+                "execution_tasks": [
+                    {"task_id": "primary", "priority": 100},
+                    {"task_id": "support_1", "priority": 80},
+                ],
+                "answer_contract": {
+                    "summary_style": "direct_answer_first",
+                    "section_order": [
+                        "summary",
+                        "direct_targets",
+                        "mechanism_of_action",
+                        "limitations",
+                    ],
+                },
+                "entities": {"drug": ["imatinib"]},
+                "subquestions": [
+                    "What are the established direct targets of imatinib?",
+                    "What is the mechanism of action of imatinib?",
+                ],
+                "preferred_skills": [
+                    "BindingDB",
+                    "ChEMBL",
+                    "Open Targets Platform",
+                    "DRUGMECHDB",
+                ],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": True,
+                "answer_risk_level": "medium",
+                "notes": ["Composite plan."],
+            }
+        )
+    ).plan("What are the known drug targets and mechanism of action of imatinib?")
+
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "direct_targets"
+    assert [task.task_type for task in plan.supporting_tasks] == [
+        "mechanism_of_action"
+    ]
+    assert plan.answer_contract is not None
+    assert plan.answer_contract.section_order[1:3] == [
+        "direct_targets",
+        "mechanism_of_action",
+    ]
+
+
+def test_planner_accepts_string_task_types_in_v2_payload() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "plan_type": "composite_query",
+                "primary_task": "direct_targets",
+                "supporting_tasks": ["mechanism_of_action"],
+                "entities": {"drug": ["imatinib"]},
+                "subquestions": [
+                    "What are the established direct targets of imatinib?",
+                    "What is the mechanism of action of imatinib?",
+                ],
+                "preferred_skills": [
+                    "BindingDB",
+                    "Open Targets Platform",
+                ],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": True,
+                "answer_risk_level": "medium",
+                "notes": ["Composite plan."],
+            }
+        )
+    ).plan("What are the known drug targets and mechanism of action of imatinib?")
+
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "direct_targets"
+    assert [task.task_type for task in plan.supporting_tasks] == [
+        "mechanism_of_action"
+    ]
+
+
+def test_planner_collapses_malformed_composite_target_lookup_into_single_task() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "plan_type": "composite_query",
+                "question_type": "target_lookup",
+                "primary_task": "direct_targets",
+                "supporting_tasks": [
+                    "direct_targets",
+                    "target_profile",
+                    "known target associations",
+                ],
+                "entities": {"drug": ["imatinib"]},
+                "subquestions": [
+                    "What are the established direct targets of imatinib?",
+                ],
+                "preferred_skills": [
+                    "BindingDB",
+                    "ChEMBL",
+                    "DGIdb",
+                ],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "medium",
+                "notes": ["Malformed target-only plan."],
+            }
+        )
+    ).plan("What does imatinib target?")
+
+    assert plan.plan_type == "single_task"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "direct_targets"
+    assert plan.supporting_tasks == []
+
+
+def test_planner_accepts_execution_task_alias_fields_in_v2_payload() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "plan_type": "single_task",
+                "question_type": "target_lookup",
+                "primary_task": "direct_targets",
+                "execution_tasks": [
+                    {
+                        "id": "primary",
+                        "task": "direct_targets",
+                        "priority": 100,
+                        "skills": ["BindingDB", "ChEMBL"],
+                    }
+                ],
+                "entities": {"drug": ["imatinib"]},
+                "subquestions": ["What are the established direct targets of imatinib?"],
+                "preferred_skills": ["BindingDB", "ChEMBL"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "medium",
+                "notes": ["Single direct-target plan."],
+            }
+        )
+    ).plan("What does imatinib target?")
+
+    assert len(plan.execution_tasks) == 1
+    assert plan.execution_tasks[0].task_id == "primary"
+    assert plan.execution_tasks[0].task_type == "direct_targets"
+
+
+def test_planner_ignores_extra_answer_contract_fields_in_v2_payload() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "plan_type": "single_task",
+                "question_type": "target_lookup",
+                "primary_task": "direct_targets",
+                "answer_contract": {
+                    "summary_style": "direct_answer_first",
+                    "section_order": ["summary", "direct_targets", "limitations"],
+                    "expected_output": "plain_english_answer",
+                },
+                "entities": {"drug": ["imatinib"]},
+                "subquestions": ["What are the established direct targets of imatinib?"],
+                "preferred_skills": ["BindingDB", "ChEMBL"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "medium",
+                "notes": ["Single direct-target plan."],
+            }
+        )
+    ).plan("What does imatinib target?")
+
+    assert plan.answer_contract is not None
+    assert plan.answer_contract.section_order == [
+        "summary",
+        "direct_targets",
+        "limitations",
+    ]
+
+
+def test_planner_enriches_v2_tasks_with_task_aware_knowhow_hints() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "plan_type": "composite_query",
+                "primary_task": {
+                    "task_type": "direct_targets",
+                    "question": "What are the established direct targets of imatinib?",
+                    "entities": {"drug": ["imatinib"]},
+                    "preferred_skills": ["BindingDB", "ChEMBL"],
+                    "preferred_evidence_types": ["database_record"],
+                    "requires_graph_reasoning": False,
+                    "requires_prediction_sources": False,
+                    "requires_web_fallback": False,
+                    "answer_risk_level": "medium",
+                    "notes": ["Use direct binding resources first."],
+                },
+                "supporting_tasks": [
+                    {
+                        "task_type": "mechanism_of_action",
+                        "question": "What is the mechanism of action of imatinib?",
+                        "entities": {"drug": ["imatinib"]},
+                        "preferred_skills": ["Open Targets Platform", "DRUGMECHDB"],
+                        "preferred_evidence_types": ["database_record"],
+                        "requires_graph_reasoning": False,
+                        "requires_prediction_sources": False,
+                        "requires_web_fallback": False,
+                        "answer_risk_level": "medium",
+                        "notes": ["Add mechanism context after direct targets."],
+                    }
+                ],
+                "answer_contract": {
+                    "summary_style": "direct_answer_first",
+                    "section_order": [
+                        "summary",
+                        "direct_targets",
+                        "mechanism_of_action",
+                        "limitations",
+                    ],
+                },
+                "entities": {"drug": ["imatinib"]},
+                "subquestions": [
+                    "What are the established direct targets of imatinib?",
+                    "What is the mechanism of action of imatinib?",
+                ],
+                "preferred_skills": [
+                    "BindingDB",
+                    "ChEMBL",
+                    "Open Targets Platform",
+                    "DRUGMECHDB",
+                ],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "medium",
+                "notes": ["Composite plan."],
+            }
+        ),
+        knowhow_registry=_make_knowhow_registry(),
+    ).plan("What are the known drug targets and mechanism of action of imatinib?")
+
+    assert plan.primary_task is not None
+    assert plan.primary_task.knowhow_doc_ids == ["direct_targets_grounding"]
+    assert plan.primary_task.knowhow_hints[0]["task_id"] == "primary"
+    assert [task.task_type for task in plan.supporting_tasks] == ["mechanism_of_action"]
+    assert plan.supporting_tasks[0].knowhow_doc_ids == ["mechanism_explanation"]
+    assert plan.supporting_tasks[0].knowhow_hints[0]["task_id"] == "support_1"
+    assert plan.knowhow_doc_ids == [
+        "direct_targets_grounding",
+        "mechanism_explanation",
+    ]
+    assert plan.question_type == "mechanism"
+
+
 def test_direct_target_lookup_recognizes_does_target_question() -> None:
     assert is_direct_target_lookup(query="What does imatinib target?") is True
+
+
+def test_direct_target_lookup_recognizes_parenthetical_mixed_same_drug_question() -> None:
+    assert is_direct_target_lookup(
+        query="What does Gleevec (imatinib, CHEMBL941) target?"
+    ) is True
 
 
 def test_planner_marks_label_query_as_non_graph_lookup() -> None:
@@ -368,12 +733,50 @@ def test_planner_normalizes_noncanonical_target_plus_moa_question_type_to_mechan
     ).plan("What are the known drug targets and mechanism of action of imatinib?")
 
     assert plan.question_type == "mechanism"
-    assert plan.preferred_skills == [
-        "Open Targets Platform",
-        "DRUGMECHDB",
-        "BindingDB",
-        "ChEMBL",
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "direct_targets"
+    assert [task.task_type for task in plan.supporting_tasks] == [
+        "mechanism_of_action"
     ]
+    assert "BindingDB" in plan.preferred_skills
+    assert "DRUGMECHDB" in plan.preferred_skills
+    assert plan.requires_graph_reasoning is False
+
+
+def test_planner_promotes_legacy_mechanism_payload_to_composite_plan() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "question_type": "mechanism",
+                "entities": {"drug": ["imatinib"]},
+                "subquestions": [
+                    "What are the known drug targets and mechanism of action of imatinib?"
+                ],
+                "preferred_skills": ["Open Targets Platform", "DRUGMECHDB"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "medium",
+                "notes": ["Legacy mechanism-only planner output."],
+            }
+        )
+    ).plan("What are the known drug targets and mechanism of action of imatinib?")
+
+    assert plan.question_type == "mechanism"
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "direct_targets"
+    assert [task.task_type for task in plan.supporting_tasks] == [
+        "mechanism_of_action"
+    ]
+    assert plan.subquestions == [
+        "What are the established direct targets of imatinib?",
+        "What is the mechanism of action of imatinib?",
+    ]
+    assert "BindingDB" in plan.preferred_skills
+    assert "DRUGMECHDB" in plan.preferred_skills
     assert plan.requires_graph_reasoning is False
 
 
@@ -476,7 +879,6 @@ def test_planner_prompt_prefers_ready_non_local_skills() -> None:
 
     assert "- ChEMBL" in prompt
     assert "- Open Targets Platform" in prompt
-    assert "- DGIdb" in prompt
     assert "- TTD" not in prompt
     assert "- TarKG" not in prompt
 
@@ -602,7 +1004,6 @@ def test_planner_prompt_prioritizes_primary_dti_sources_for_target_lookup() -> N
 
     assert "- BindingDB" in prompt
     assert "- ChEMBL" in prompt
-    assert "- DGIdb" in prompt
     assert "- Open Targets Platform" in prompt
     assert "- Molecular Targets" not in prompt
     assert "- DRUGMECHDB" not in prompt

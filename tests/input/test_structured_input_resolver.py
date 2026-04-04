@@ -185,3 +185,31 @@ def test_structured_input_resolver_keeps_unresolved_query_unchanged() -> None:
 
     assert result["status"] == "unresolved"
     assert result["normalized_query"] == "What are the known drug targets of CHEMBL999999999?"
+
+
+def test_structured_input_resolver_emits_identifier_mentions() -> None:
+    resolver = StructuredInputResolver(
+        source=_SourceStub(
+            {
+                ("chembl_id", "CHEMBL941"): [
+                    _record("chembl_id", "CHEMBL941", "imatinib")
+                ]
+            }
+        )
+    )
+
+    result = resolver.resolve_query(
+        "What does CHEMBL941 target?"
+    )
+
+    assert result["rewrite_applied"] is True
+    assert result["drug_mentions"] == [
+        {
+            "raw_text": "CHEMBL941",
+            "mention_type": "chembl_id",
+            "normalized_value": "CHEMBL941",
+            "canonical_drug_name": "imatinib",
+            "resolution_stage": "identifier",
+            "source": "stub",
+        }
+    ]

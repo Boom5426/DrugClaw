@@ -1,0 +1,13 @@
+{
+  "package_id": "nsides_safety",
+  "skill_name": "nSIDES",
+  "protocol_docs": [
+    "resources_metadata/packages/nsides_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/nsides_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/adr/adr_signal_tiering.md"
+  ]
+}

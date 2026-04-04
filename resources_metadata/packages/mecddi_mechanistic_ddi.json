@@ -1,0 +1,16 @@
+{
+  "package_id": "mecddi_mechanistic_ddi",
+  "skill_name": "MecDDI",
+  "dataset_bundle": [
+    "resources_metadata/ddi/MecDDI/mecddi.csv"
+  ],
+  "protocol_docs": [
+    "resources_metadata/packages/mecddi_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/mecddi_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/ddi/clinical_ddi_prioritization.md"
+  ]
+}

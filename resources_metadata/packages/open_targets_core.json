@@ -1,0 +1,14 @@
+{
+  "package_id": "open_targets_core",
+  "skill_name": "Open Targets Platform",
+  "protocol_docs": [
+    "resources_metadata/packages/open_targets_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/open_targets_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/dti/direct_targets_grounding.md",
+    "resources_metadata/knowhow/drug_mechanism/mechanism_explanation.md"
+  ]
+}

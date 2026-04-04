@@ -1,0 +1,13 @@
+{
+  "package_id": "drugmechdb_mechanism",
+  "skill_name": "DRUGMECHDB",
+  "protocol_docs": [
+    "resources_metadata/packages/drugmechdb_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/drugmechdb_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/drug_mechanism/mechanism_explanation.md"
+  ]
+}

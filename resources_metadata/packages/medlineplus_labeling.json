@@ -1,0 +1,20 @@
+{
+  "package_id": "medlineplus_labeling",
+  "skill_name": "MedlinePlus Drug Info",
+  "protocol_docs": [
+    "resources_metadata/packages/medlineplus_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/medlineplus_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/drug_labeling/labeling_regulatory_priority.md"
+  ],
+  "gateway": {
+    "transport": "rest_api",
+    "endpoint": "https://connect.medlineplus.gov/service",
+    "tool_namespace": "medlineplus.drug_info",
+    "docs_url": "https://medlineplus.gov/connect/overview.html",
+    "read_only": true
+  }
+}

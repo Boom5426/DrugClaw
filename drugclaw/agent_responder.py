@@ -7,10 +7,17 @@ from math import log10
 from typing import List, Dict, Any
 
 from .claim_assessment import ClaimAssessment, assess_claims
+from .answer_validation import validate_answer_output
 from .evidence import ClaimSummary, FinalAnswer, score_answer_confidence, score_claim_confidence
 from .models import AgentState, EvidencePath
 from .llm_client import LLMClient
-from .query_plan import infer_entities_from_query, infer_question_type_from_query
+from .query_plan import (
+    infer_entities_from_query,
+    infer_question_type_from_query,
+    is_direct_target_lookup,
+    normalize_question_type,
+    normalize_task_type,
+)
 from .task_evidence_policy import classify_evidence_item
 from .web_evidence import build_task_aware_web_section, build_web_citations, summarize_web_results
 
@@ -389,6 +396,7 @@ Formatting requirements:
             state.original_query,
             state.evidence_items,
             claim_assessments=state.claim_assessments,
+            query_plan=getattr(state, "query_plan", None),
             web_search_results=getattr(state, "web_search_results", []),
         )
         state.final_answer_structured = final_answer
@@ -404,9 +412,13 @@ Formatting requirements:
         query: str,
         evidence_items,
         claim_assessments: List[ClaimAssessment] | None = None,
+        query_plan: Any | None = None,
         web_search_results: List[Dict[str, Any]] | None = None,
     ) -> FinalAnswer:
-        query_type = infer_question_type_from_query(query)
+        plan_type, task_type, supporting_task_types, legacy_question_type = self._resolve_task_plan_context(
+            query,
+            query_plan=query_plan,
+        )
         if not evidence_items:
             return FinalAnswer(
                 answer_text=(
@@ -419,25 +431,26 @@ Formatting requirements:
                 citations=[],
                 limitations=["No structured evidence items were available."],
                 warnings=["Insufficient evidence."],
-                task_type=query_type,
+                task_type=plan_type if plan_type == "composite_query" else legacy_question_type,
                 final_outcome="honest_gap",
                 diagnostics={"strong_record_count": 0, "weak_support_count": 0},
             )
 
         filtered_items = list(evidence_items)
-        is_target_lookup = self._is_target_lookup_query(query, query_type)
-        if is_target_lookup:
+        is_direct_targets = task_type == "direct_targets"
+        is_target_profile = task_type == "target_profile"
+        if is_direct_targets or is_target_profile:
             filtered_items = self._filter_target_evidence_items(filtered_items) or filtered_items
-        elif query_type in {"ddi", "ddi_mechanism"}:
+        elif task_type in {"clinically_relevant_ddi", "ddi_mechanism"}:
             filtered_items = self._filter_ddi_evidence_items(filtered_items) or filtered_items
-        elif query_type == "pharmacogenomics":
+        elif task_type == "pgx_guidance":
             filtered_items = self._filter_pgx_evidence_items(query, filtered_items) or filtered_items
-        elif query_type == "adr":
+        elif task_type == "major_adrs":
             filtered_items = self._filter_adr_evidence_items(filtered_items) or filtered_items
-        elif query_type == "labeling":
+        elif task_type == "labeling_summary":
             filtered_items = self._filter_labeling_evidence_items(query, filtered_items) or filtered_items
-        if not is_target_lookup:
-            self._semanticize_claims_for_query_type(query_type, filtered_items)
+        if not (is_direct_targets or is_target_profile):
+            self._semanticize_claims_for_query_type(legacy_question_type, filtered_items)
 
         assessments = list(claim_assessments or [])
         if not assessments:
@@ -449,7 +462,14 @@ Formatting requirements:
                 if assessment.claim in allowed_claims
             ]
 
-        if query_type == "mechanism":
+        if plan_type == "composite_query" and supporting_task_types:
+            claims = self._composite_primary_claims(
+                query,
+                task_type,
+                filtered_items,
+                assessments,
+            )
+        elif task_type == "mechanism_of_action":
             _, _, target_claims, mechanism_claims = self._mechanism_claim_groups(
                 query,
                 filtered_items,
@@ -462,60 +482,100 @@ Formatting requirements:
                     continue
                 seen_claims.add(claim.claim)
                 claims.append(claim)
-        elif is_target_lookup:
+        elif is_direct_targets or is_target_profile:
             claims = self._summarize_target_claims(query, filtered_items, assessments)
         else:
             claims = self._summarize_claims(filtered_items, assessments)
         warnings = self._build_warnings(assessments, claims, filtered_items)
         limitations = self._build_limitations(assessments, claims, filtered_items)
         citations = self._build_citations(filtered_items)
-        web_section = build_task_aware_web_section(query_type, web_search_results or [])
+        web_section = build_task_aware_web_section(legacy_question_type, web_search_results or [])
         web_summaries = summarize_web_results(web_search_results or [])
         citations.extend(build_web_citations(web_search_results or []))
         final_outcome, diagnostics = self._compute_task_outcome(
-            query_type,
+            task_type,
             filtered_items,
             claims,
         )
-        answer_text = (
-            self._render_repurposing_answer(
+        diagnostics.update(
+            self._summarize_knowhow_usage(query_plan)
+        )
+        web_payload = web_section or ("Authority-first web evidence:", web_summaries)
+        if plan_type == "composite_query" and supporting_task_types:
+            answer_text = self._render_composite_answer(
+                query,
+                filtered_items,
+                assessments,
+                task_type,
+                supporting_task_types,
+                warnings,
+                limitations,
+                web_payload,
+            )
+        elif task_type == "repurposing_evidence":
+            answer_text = self._render_repurposing_answer(
                 query,
                 filtered_items,
                 warnings,
                 limitations,
-                web_section or ("Authority-first web evidence:", web_summaries),
+                web_payload,
             )
-            if query_type == "drug_repurposing"
-            else (
-                self._render_mechanism_answer(
-                    query,
-                    filtered_items,
-                    assessments,
-                    warnings,
-                    limitations,
-                    web_section or ("Authority-first web evidence:", web_summaries),
-                )
-                if query_type == "mechanism"
-                else (
-                    self._render_target_answer(
-                        query,
-                        claims,
-                        warnings,
-                        limitations,
-                        web_section or ("Authority-first web evidence:", web_summaries),
-                    )
-                    if is_target_lookup
-                    else self._render_answer_text(
-                        query,
-                        query_type,
-                        claims,
-                        warnings,
-                        limitations,
-                        web_section or ("Authority-first web evidence:", web_summaries),
-                    )
-                )
+        elif task_type == "mechanism_of_action":
+            answer_text = self._render_mechanism_answer(
+                query,
+                filtered_items,
+                assessments,
+                warnings,
+                limitations,
+                web_payload,
             )
+        elif task_type == "direct_targets":
+            answer_text = self._render_direct_targets_answer(
+                query,
+                filtered_items,
+                assessments,
+                warnings,
+                limitations,
+                web_payload,
+            )
+        elif task_type == "target_profile":
+            answer_text = self._render_target_answer(
+                query,
+                claims,
+                warnings,
+                limitations,
+                web_payload,
+            )
+        else:
+            answer_text = self._render_answer_text(
+                query,
+                legacy_question_type,
+                claims,
+                warnings,
+                limitations,
+                web_payload,
+            )
+
+        knowhow_lines = self._build_knowhow_guidance_lines(
+            query_plan,
+            primary_task_type=task_type,
+            supporting_task_types=supporting_task_types,
         )
+        if knowhow_lines:
+            answer_text = self._inject_knowhow_guidance(
+                answer_text,
+                knowhow_lines,
+            )
+
+        validation_issues = validate_answer_output(
+            query=query,
+            answer_text=answer_text,
+            query_plan=query_plan,
+        )
+        if validation_issues:
+            diagnostics["output_validation_issue_codes"] = [
+                issue.code for issue in validation_issues
+            ]
 
         return FinalAnswer(
             answer_text=answer_text,
@@ -525,15 +585,221 @@ Formatting requirements:
             citations=citations,
             limitations=limitations,
             warnings=warnings,
-            task_type=query_type,
+            task_type=plan_type if plan_type == "composite_query" else legacy_question_type,
             final_outcome=final_outcome,
             diagnostics=diagnostics,
         )
 
     @staticmethod
+    def _resolve_task_plan_context(
+        query: str,
+        *,
+        query_plan: Any | None = None,
+    ) -> tuple[str, str, List[str], str]:
+        primary_task = getattr(query_plan, "primary_task", None)
+        primary_task_type = normalize_task_type(
+            getattr(primary_task, "task_type", "") or ""
+        )
+        if primary_task_type == "unknown":
+            primary_task_type = normalize_task_type(infer_question_type_from_query(query))
+
+        supporting_task_types: List[str] = []
+        seen_task_types = {primary_task_type} if primary_task_type != "unknown" else set()
+        for task in (getattr(query_plan, "supporting_tasks", []) or []):
+            task_type = normalize_task_type(getattr(task, "task_type", ""))
+            if task_type == "unknown" or task_type in seen_task_types:
+                continue
+            seen_task_types.add(task_type)
+            supporting_task_types.append(task_type)
+        plan_type = str(getattr(query_plan, "plan_type", "") or "").strip()
+        if not plan_type:
+            plan_type = "composite_query" if supporting_task_types else "single_task"
+
+        legacy_question_type = normalize_question_type(
+            getattr(query_plan, "question_type", "") or infer_question_type_from_query(query)
+        )
+        if is_direct_target_lookup(query=query, question_type=legacy_question_type):
+            supporting_task_types = []
+            plan_type = "single_task"
+        return plan_type, primary_task_type, supporting_task_types, legacy_question_type
+
+    @staticmethod
+    def _summarize_knowhow_usage(query_plan: Any | None) -> Dict[str, Any]:
+        knowhow_doc_ids: List[str] = []
+        knowhow_task_ids: List[str] = []
+        knowhow_task_types: List[str] = []
+
+        for hint in ResponderAgent._iter_knowhow_hints(query_plan):
+            doc_id = str(hint.get("doc_id", "")).strip()
+            task_id = str(hint.get("task_id", "")).strip()
+            task_type = normalize_task_type(hint.get("task_type", ""))
+            if doc_id and doc_id not in knowhow_doc_ids:
+                knowhow_doc_ids.append(doc_id)
+            if task_id and task_id not in knowhow_task_ids:
+                knowhow_task_ids.append(task_id)
+            if task_type != "unknown" and task_type not in knowhow_task_types:
+                knowhow_task_types.append(task_type)
+
+        if not knowhow_doc_ids:
+            return {}
+
+        return {
+            "knowhow_doc_ids": knowhow_doc_ids,
+            "knowhow_task_ids": knowhow_task_ids,
+            "knowhow_task_types": knowhow_task_types,
+            "knowhow_hint_count": len(list(ResponderAgent._iter_knowhow_hints(query_plan))),
+        }
+
+    @staticmethod
+    def _iter_knowhow_hints(query_plan: Any | None) -> List[Dict[str, Any]]:
+        if query_plan is None:
+            return []
+
+        raw_hints: List[Any] = list(getattr(query_plan, "knowhow_hints", []) or [])
+        tasks = [getattr(query_plan, "primary_task", None)] + list(
+            getattr(query_plan, "supporting_tasks", []) or []
+        )
+        for task in tasks:
+            if task is None:
+                continue
+            raw_hints.extend(list(getattr(task, "knowhow_hints", []) or []))
+
+        normalized: List[Dict[str, Any]] = []
+        seen = set()
+        for hint in raw_hints:
+            if hasattr(hint, "to_dict"):
+                hint = hint.to_dict()
+            if not isinstance(hint, dict):
+                continue
+            normalized_hint = {
+                "doc_id": str(hint.get("doc_id", "")).strip(),
+                "title": str(hint.get("title", "")).strip(),
+                "task_id": str(hint.get("task_id", "")).strip(),
+                "task_type": normalize_task_type(hint.get("task_type", "")),
+                "snippet": str(hint.get("snippet", "")).strip(),
+                "declared_by_skills": [
+                    str(value).strip()
+                    for value in list(hint.get("declared_by_skills", []) or [])
+                    if str(value).strip()
+                ],
+            }
+            key = (
+                normalized_hint["task_id"],
+                normalized_hint["doc_id"],
+                normalized_hint["snippet"],
+            )
+            if key in seen or not normalized_hint["doc_id"]:
+                continue
+            seen.add(key)
+            normalized.append(normalized_hint)
+        return normalized
+
+    @staticmethod
+    def _build_knowhow_guidance_lines(
+        query_plan: Any | None,
+        *,
+        primary_task_type: str,
+        supporting_task_types: List[str],
+    ) -> List[str]:
+        task_to_lines: Dict[str, List[str]] = defaultdict(list)
+        for hint in ResponderAgent._iter_knowhow_hints(query_plan):
+            snippet = str(hint.get("snippet", "")).strip()
+            if not snippet:
+                continue
+            title = str(hint.get("title", "")).strip() or str(hint.get("doc_id", "")).strip()
+            declared_by_skills = list(hint.get("declared_by_skills", []) or [])
+            title_suffix = (
+                f" [{', '.join(declared_by_skills)}]"
+                if declared_by_skills
+                else ""
+            )
+            task_type = normalize_task_type(hint.get("task_type", ""))
+            line = f"- {title}{title_suffix}: {snippet}"
+            if task_type == "unknown":
+                task_type = normalize_task_type(primary_task_type)
+            if line not in task_to_lines[task_type]:
+                task_to_lines[task_type].append(line)
+
+        if not task_to_lines:
+            return []
+
+        ordered_task_types: List[str] = []
+        section_order = list(
+            getattr(getattr(query_plan, "answer_contract", None), "section_order", []) or []
+        )
+        for section in section_order:
+            task_type = normalize_task_type(section)
+            if task_type in task_to_lines and task_type not in ordered_task_types:
+                ordered_task_types.append(task_type)
+        for task_type in [primary_task_type] + list(supporting_task_types):
+            normalized_task_type = normalize_task_type(task_type)
+            if (
+                normalized_task_type in task_to_lines
+                and normalized_task_type not in ordered_task_types
+            ):
+                ordered_task_types.append(normalized_task_type)
+        for task_type in task_to_lines:
+            if task_type not in ordered_task_types:
+                ordered_task_types.append(task_type)
+
+        lines = ["Evidence interpretation guidance:"]
+        multi_task = len(ordered_task_types) > 1
+        for task_type in ordered_task_types:
+            if multi_task:
+                lines.append(f"{task_type.replace('_', ' ').title()}:")
+            lines.extend(task_to_lines[task_type][:2])
+            lines.append("")
+        if lines[-1] == "":
+            lines.pop()
+        return lines
+
+    @staticmethod
+    def _inject_knowhow_guidance(answer_text: str, knowhow_lines: List[str]) -> str:
+        if not knowhow_lines:
+            return answer_text
+
+        lines = answer_text.splitlines()
+        insert_index = len(lines)
+        for marker in ("Warnings:", "Limitations:"):
+            if marker in lines:
+                insert_index = min(insert_index, lines.index(marker))
+
+        block = knowhow_lines
+        if insert_index == len(lines):
+            return "\n".join(lines + [""] + block)
+        return "\n".join(lines[:insert_index] + [""] + block + [""] + lines[insert_index:])
+
+    def _composite_primary_claims(
+        self,
+        query: str,
+        task_type: str,
+        evidence_items,
+        assessments: List[ClaimAssessment],
+    ) -> List[ClaimSummary]:
+        if task_type == "direct_targets":
+            direct_sections, _ = self._partition_direct_target_items(evidence_items)
+            primary_items = (
+                direct_sections["established_direct_targets"]
+                or direct_sections["association_only_signals"]
+            )
+            return self._summarize_target_claims(
+                query,
+                primary_items,
+                self._subset_assessments_for_items(assessments, primary_items),
+            )
+        if task_type == "mechanism_of_action":
+            _, _, target_claims, mechanism_claims = self._mechanism_claim_groups(
+                query,
+                evidence_items,
+                assessments,
+            )
+            return target_claims + mechanism_claims
+        return self._summarize_claims(evidence_items, assessments)
+
+    @staticmethod
     def _is_target_lookup_query(query: str, query_type: str = "") -> bool:
-        normalized_query_type = str(query_type or infer_question_type_from_query(query)).strip().lower()
-        return normalized_query_type == "target_lookup"
+        normalized_query_type = normalize_task_type(query_type or infer_question_type_from_query(query))
+        return normalized_query_type in {"direct_targets", "target_profile"}
 
     def _filter_target_evidence_items(self, evidence_items) -> List[Any]:
         filtered = []
@@ -957,6 +1223,22 @@ Formatting requirements:
         evidence_items,
         assessments: List[ClaimAssessment],
     ) -> List[ClaimSummary]:
+        ranked_groups = self._rank_target_group_summaries(
+            query,
+            evidence_items,
+            assessments,
+        )
+        if ranked_groups:
+            return [group["summary"] for group in ranked_groups]
+
+        return self._summarize_claims(evidence_items, assessments)
+
+    def _rank_target_group_summaries(
+        self,
+        query: str,
+        evidence_items,
+        assessments: List[ClaimAssessment],
+    ) -> List[Dict[str, Any]]:
         grouped: Dict[str, List[Any]] = defaultdict(list)
         for item in evidence_items:
             target_label = self._extract_target_label(item)
@@ -964,11 +1246,11 @@ Formatting requirements:
                 grouped[self._canonical_target_key(target_label)].append(item)
 
         if not grouped:
-            return self._summarize_claims(evidence_items, assessments)
+            return []
 
         drug_name = self._extract_primary_drug_name(query, evidence_items)
         assessment_by_claim = {assessment.claim: assessment for assessment in assessments}
-        ranked_summaries: List[tuple[tuple[Any, ...], ClaimSummary]] = []
+        ranked_summaries: List[Dict[str, Any]] = []
         for _, items in grouped.items():
             label = self._choose_target_label(items)
             evidence_ids: List[str] = []
@@ -1009,25 +1291,33 @@ Formatting requirements:
                 evidence_ids=evidence_ids,
                 citations=citations,
             )
-            ranked_summaries.append(
-                (
-                    (
-                        len(source_skills),
-                        len(evidence_ids),
-                        relationship_bonus,
-                        max(specificity_scores) if specificity_scores else 0.0,
-                        max(potency_scores) if potency_scores else 0.0,
-                        max(claim_confidences) if claim_confidences else 0.0,
-                        max(retrieval_scores) if retrieval_scores else 0.0,
-                        label,
-                    ),
-                    summary,
-                )
+            ranking_key = (
+                -len(source_skills),
+                -len(evidence_ids),
+                -relationship_bonus,
+                -(max(specificity_scores) if specificity_scores else 0.0),
+                -(max(potency_scores) if potency_scores else 0.0),
+                -(max(claim_confidences) if claim_confidences else 0.0),
+                -(max(retrieval_scores) if retrieval_scores else 0.0),
+                label,
             )
-        return [
-            summary
-            for _, summary in sorted(ranked_summaries, key=lambda item: item[0], reverse=True)
-        ]
+            ranked_summaries.append(
+                {
+                    "summary": summary,
+                    "label": label,
+                    "canonical_key": self._canonical_target_key(label),
+                    "items": list(items),
+                    "source_skills": set(source_skills),
+                    "evidence_count": len(evidence_ids),
+                    "has_curated_source": bool(
+                        source_skills.intersection(
+                            {"BindingDB", "DrugBank", "DrugCentral", "IUPHAR", "TTD"}
+                        )
+                    ),
+                    "ranking_key": ranking_key,
+                }
+            )
+        return sorted(ranked_summaries, key=lambda item: item["ranking_key"])
 
     @staticmethod
     def _build_warnings(
@@ -1111,7 +1401,17 @@ Formatting requirements:
         evidence_items,
         claims: List[ClaimSummary],
     ) -> tuple[str, Dict[str, Any]]:
-        if query_type == "drug_repurposing":
+        normalized_task_type = normalize_task_type(query_type)
+
+        if normalized_task_type == "direct_targets":
+            sections, diagnostics = self._partition_direct_target_items(evidence_items)
+            if sections["established_direct_targets"]:
+                return "strong_answer", diagnostics
+            if sections["association_only_signals"]:
+                return "partial_with_weak_support", diagnostics
+            return "honest_gap", diagnostics
+
+        if normalized_task_type == "repurposing_evidence":
             sections, diagnostics = self._partition_repurposing_items(evidence_items)
             if sections["repurposing_evidence"]:
                 return "strong_answer", diagnostics
@@ -1119,7 +1419,7 @@ Formatting requirements:
                 return "partial_with_weak_support", diagnostics
             return "honest_gap", diagnostics
 
-        if query_type == "mechanism":
+        if normalized_task_type == "mechanism_of_action":
             target_items = [item for item in evidence_items if self._is_target_evidence_item(item)]
             mechanism_items = [item for item in evidence_items if self._is_mechanism_evidence_item(item)]
             diagnostics = {
@@ -1133,7 +1433,7 @@ Formatting requirements:
                 return "partial_with_weak_support", diagnostics
             return "honest_gap", diagnostics
 
-        if query_type == "pharmacogenomics":
+        if normalized_task_type == "pgx_guidance":
             strong_items = [item for item in evidence_items if self._is_strong_pgx_item(item)]
             diagnostics = {
                 "strong_record_count": len(strong_items),
@@ -1149,7 +1449,7 @@ Formatting requirements:
             "evidence_count": len(evidence_items),
             "claim_count": len(claims),
         }
-        if query_type == "adr" and not claims:
+        if normalized_task_type == "major_adrs" and not claims:
             return "honest_gap", diagnostics
         if claims:
             return "partial_with_weak_support", diagnostics
@@ -1216,6 +1516,33 @@ Formatting requirements:
                 or actionable
             )
         )
+
+    def _partition_direct_target_items(self, evidence_items) -> tuple[Dict[str, List[Any]], Dict[str, Any]]:
+        sections = {
+            "established_direct_targets": [],
+            "association_only_signals": [],
+            "additional_context": [],
+        }
+        diagnostics: Dict[str, Any] = {
+            "established_direct_target_count": 0,
+            "association_only_signal_count": 0,
+            "additional_context_count": 0,
+        }
+
+        for item in evidence_items:
+            classification = classify_evidence_item("direct_targets", item)
+            slot = classification.slot if classification.slot in sections else "additional_context"
+            sections[slot].append(item)
+            diagnostics[f"{slot[:-1] if slot.endswith('s') else slot}_count"] = diagnostics.get(
+                f"{slot[:-1] if slot.endswith('s') else slot}_count",
+                0,
+            )
+
+        diagnostics["established_direct_target_count"] = len(sections["established_direct_targets"])
+        diagnostics["association_only_signal_count"] = len(sections["association_only_signals"])
+        diagnostics["additional_context_count"] = len(sections["additional_context"])
+        diagnostics["coverage_gap"] = len(sections["established_direct_targets"]) == 0
+        return sections, diagnostics
 
     def _partition_repurposing_items(self, evidence_items) -> tuple[Dict[str, List[Any]], Dict[str, Any]]:
         sections = {
@@ -1333,6 +1660,229 @@ Formatting requirements:
             for claim in claims[:limit]
         ]
 
+    def _build_direct_targets_section_lines(
+        self,
+        query: str,
+        evidence_items,
+        assessments: List[ClaimAssessment],
+    ) -> List[str]:
+        sections, _ = self._partition_direct_target_items(evidence_items)
+        established_items = sections["established_direct_targets"]
+        association_items = sections["association_only_signals"]
+        association_keys = {
+            self._canonical_target_key(self._extract_target_label(item))
+            for item in association_items
+            if self._extract_target_label(item)
+        }
+        ranked_established_groups = (
+            self._rank_target_group_summaries(
+                query,
+                established_items,
+                self._subset_assessments_for_items(assessments, established_items),
+            )
+            if established_items
+            else []
+        )
+        established_claims: List[ClaimSummary] = []
+        additional_direct_activity_groups: List[Dict[str, Any]] = []
+        for group in ranked_established_groups:
+            if group["has_curated_source"] or len(group["source_skills"]) >= 2:
+                established_claims.append(group["summary"])
+            else:
+                additional_direct_activity_groups.append(group)
+
+        additional_direct_activity_groups = sorted(
+            additional_direct_activity_groups,
+            key=lambda group: (
+                0 if group["canonical_key"] in association_keys else 1,
+                group["ranking_key"],
+            ),
+        )
+        if len(established_claims) < 3 and additional_direct_activity_groups:
+            promote_count = min(3 - len(established_claims), len(additional_direct_activity_groups))
+            established_claims.extend(
+                group["summary"] for group in additional_direct_activity_groups[:promote_count]
+            )
+            additional_direct_activity_groups = additional_direct_activity_groups[promote_count:]
+        additional_direct_activity_claims = [
+            group["summary"] for group in additional_direct_activity_groups
+        ]
+
+        association_claims = (
+            self._summarize_target_claims(
+                query,
+                association_items,
+                self._subset_assessments_for_items(assessments, association_items),
+            )
+            if association_items
+            else []
+        )
+
+        lines = ["Established Direct Targets:"]
+        lines.extend(
+            self._format_claim_lines(
+                established_claims,
+                "No established direct-target evidence was retrieved.",
+            )
+        )
+        if additional_direct_activity_claims:
+            lines.extend(["", "Additional Direct Activity Hits:"])
+            lines.extend(
+                self._format_claim_lines(
+                    additional_direct_activity_claims,
+                    "No additional direct activity hits were retrieved.",
+                )
+            )
+        lines.extend(["", "Association-Only Signals:"])
+        lines.extend(
+            self._format_claim_lines(
+                association_claims,
+                "No weaker association-only target signals were retrieved.",
+            )
+        )
+        return lines
+
+    def _build_mechanism_section_lines(
+        self,
+        query: str,
+        evidence_items,
+        assessments: List[ClaimAssessment],
+        *,
+        title_case: bool = False,
+        include_targets: bool = True,
+    ) -> List[str]:
+        _, _, target_claims, mechanism_claims = self._mechanism_claim_groups(
+            query,
+            evidence_items,
+            assessments,
+        )
+
+        target_heading = "Targets Supported:" if title_case else "Targets supported:"
+        mechanism_heading = "Mechanism Coverage:" if title_case else "Mechanism coverage:"
+
+        lines: List[str] = []
+        if include_targets:
+            lines.append(target_heading)
+            lines.extend(
+                self._format_claim_lines(
+                    target_claims,
+                    "No target-support evidence was retrieved.",
+                )
+            )
+            lines.extend(["", mechanism_heading])
+        else:
+            lines.append(mechanism_heading)
+        lines.extend(
+            self._format_claim_lines(
+                mechanism_claims,
+                "No direct mechanism-of-action evidence was retrieved.",
+            )
+        )
+        if not mechanism_claims:
+            lines.extend(
+                [
+                    "",
+                    "Coverage gaps:",
+                    "- Direct mechanism-of-action support was not retrieved, so this answer reflects target support rather than full MOA completeness.",
+                ]
+            )
+        return lines
+
+    def _render_direct_targets_answer(
+        self,
+        query: str,
+        evidence_items,
+        assessments: List[ClaimAssessment],
+        warnings: List[str],
+        limitations: List[str],
+        web_section: tuple[str, List[str]],
+    ) -> str:
+        lines = [f"Query: {query}", "", "Known Targets:", ""]
+        lines.extend(self._build_direct_targets_section_lines(query, evidence_items, assessments))
+
+        web_heading, web_lines = web_section
+        if web_lines:
+            lines.extend(["", web_heading])
+            lines.extend(web_lines)
+
+        if warnings:
+            lines.extend(["", "Warnings:"])
+            lines.extend(f"- {warning}" for warning in warnings)
+
+        if limitations:
+            lines.extend(["", "Limitations:"])
+            lines.extend(f"- {limitation}" for limitation in limitations)
+
+        return "\n".join(lines)
+
+    def _render_composite_answer(
+        self,
+        query: str,
+        evidence_items,
+        assessments: List[ClaimAssessment],
+        primary_task_type: str,
+        supporting_task_types: List[str],
+        warnings: List[str],
+        limitations: List[str],
+        web_section: tuple[str, List[str]],
+    ) -> str:
+        lines = [f"Query: {query}", "", "Short Answer:"]
+
+        primary_claims = self._composite_primary_claims(
+            query,
+            primary_task_type,
+            evidence_items,
+            assessments,
+        )
+        if primary_claims:
+            primary_labels = ", ".join(
+                self._claim_to_target_fragment(claim.claim)
+                for claim in primary_claims[:3]
+            )
+            lines.append(f"- Primary supported answer: {primary_labels}")
+        else:
+            lines.append("- Structured evidence is available, but the primary answer remains incomplete.")
+
+        task_order = [primary_task_type] + list(supporting_task_types)
+        for task_type in task_order:
+            lines.append("")
+            if task_type == "direct_targets":
+                lines.extend(self._build_direct_targets_section_lines(query, evidence_items, assessments))
+            elif task_type == "mechanism_of_action":
+                lines.extend(
+                    self._build_mechanism_section_lines(
+                        query,
+                        evidence_items,
+                        assessments,
+                        title_case=True,
+                        include_targets=False,
+                    )
+                )
+            else:
+                task_claims = self._summarize_claims(evidence_items, assessments)
+                lines.append(f"{task_type.replace('_', ' ').title()}:")
+                lines.extend(
+                    self._format_claim_lines(
+                        task_claims,
+                        "No structured evidence was retrieved for this section.",
+                    )
+                )
+
+        web_heading, web_lines = web_section
+        if web_lines:
+            lines.extend(["", web_heading])
+            lines.extend(web_lines)
+
+        if warnings:
+            lines.extend(["", "Warnings:"])
+            lines.extend(f"- {warning}" for warning in warnings)
+
+        if limitations:
+            lines.extend(["", "Limitations:"])
+            lines.extend(f"- {limitation}" for limitation in limitations)
+
+        return "\n".join(lines)
+
     def _render_repurposing_answer(
         self,
         query: str,
@@ -1403,37 +1953,15 @@ Formatting requirements:
         limitations: List[str],
         web_section: tuple[str, List[str]],
     ) -> str:
-        _, _, target_claims, mechanism_claims = self._mechanism_claim_groups(
-            query,
-            evidence_items,
-            assessments,
-        )
-
-        lines = [f"Query: {query}", "", "Targets supported:"]
+        lines = [f"Query: {query}", ""]
         lines.extend(
-            self._format_claim_lines(
-                target_claims,
-                "No target-support evidence was retrieved.",
+            self._build_mechanism_section_lines(
+                query,
+                evidence_items,
+                assessments,
+                title_case=False,
             )
         )
-
-        lines.extend(["", "Mechanism coverage:"])
-        lines.extend(
-            self._format_claim_lines(
-                mechanism_claims,
-                "No direct mechanism-of-action evidence was retrieved.",
-            )
-        )
-
-        if not mechanism_claims:
-            lines.extend(
-                [
-                    "",
-                    "Coverage gaps:",
-                    "- Direct mechanism-of-action support was not retrieved, so this answer reflects target support rather than full MOA completeness.",
-                ]
-            )
-
         web_heading, web_lines = web_section
         if web_lines:
             lines.extend(["", web_heading])
@@ -1559,6 +2087,15 @@ Formatting requirements:
         }.get(str(query_type or "").strip().lower(), "Key Claims")
 
     @staticmethod
+    def _claim_to_target_fragment(claim: str) -> str:
+        text = str(claim or "").strip().rstrip(".")
+        if " targets " in text:
+            return text.split(" targets ", 1)[1].strip()
+        if ": " in text:
+            return text.split(": ", 1)[1].strip()
+        return text
+
+    @staticmethod
     def _extract_target_label(item: Any) -> str:
         target_label = str(item.metadata.get("target_entity", "")).strip()
         if target_label:
@@ -1626,7 +2163,12 @@ Formatting requirements:
         token_match = re.search(r"\b([A-Z0-9-]{2,8})\b$", cleaned.upper())
         if token_match:
             token = token_match.group(1)
-            if token not in {"TYPE", "ALPHA", "BETA", "GAMMA", "RECEPTOR", "KINASE", "PROTEIN", "GTPASE"}:
+            if (
+                token[0].isalpha()
+                and token not in {"TYPE", "ALPHA", "BETA", "GAMMA", "RECEPTOR", "KINASE", "PROTEIN", "GTPASE"}
+                and not token.startswith(("ALPHA", "BETA", "GAMMA", "DELTA", "EPSILON"))
+                and (any(ch.isdigit() for ch in token) or len(token) <= 4)
+            ):
                 return token
         return cleaned
 

@@ -111,6 +111,10 @@ def get_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def get_package_manifest_dir(repo_root: Path | None = None) -> Path:
+    return (repo_root or get_repo_root()) / "resources_metadata" / "packages"
+
+
 def is_path_key(key: str) -> bool:
     return str(key).lower().endswith(_PATH_KEY_SUFFIXES)
 
@@ -120,6 +124,30 @@ def resolve_path_value(value: str | Path, repo_root: Path | None = None) -> Path
     if candidate.is_absolute():
         return candidate
     return (repo_root or get_repo_root()) / candidate
+
+
+def discover_package_manifest_paths(repo_root: Path | None = None) -> List[Path]:
+    packages_dir = get_package_manifest_dir(repo_root)
+    if not packages_dir.exists():
+        return []
+    return sorted(
+        path for path in packages_dir.glob("*.json")
+        if path.is_file()
+    )
+
+
+def resolve_package_component_paths(
+    values: Iterable[str | Path],
+    repo_root: Path | None = None,
+) -> List[str]:
+    root = repo_root or get_repo_root()
+    resolved: List[str] = []
+    for value in values:
+        candidate = str(value or "").strip()
+        if not candidate:
+            continue
+        resolved.append(str(resolve_path_value(candidate, root)))
+    return resolved
 
 
 def default_skill_paths(skill_name: str, repo_root: Path | None = None) -> Dict[str, str]:

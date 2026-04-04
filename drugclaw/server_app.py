@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
-from .server_models import QueryRequest
+from .server_models import GatewayInvokeRequest, QueryRequest
 from .service_runtime import DrugClawServiceRuntime
 
 
@@ -27,11 +27,11 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict:
-        return await asyncio.to_thread(app.state.runtime.health)
+        return await run_in_threadpool(app.state.runtime.health)
 
     @app.get("/resources")
     async def resources() -> dict:
-        return await asyncio.to_thread(app.state.runtime.resources)
+        return await run_in_threadpool(app.state.runtime.resources)
 
     @app.post("/api/query")
     async def query(request: QueryRequest) -> dict:
@@ -39,7 +39,7 @@ def create_app(
         default_mode = getattr(runtime_config, "SERVER_DEFAULT_MODE", "simple")
         effective_mode = request.mode or default_mode
         try:
-            return await asyncio.to_thread(
+            return await run_in_threadpool(
                 app.state.runtime.run_query,
                 query=request.query,
                 mode=effective_mode,
@@ -52,17 +52,33 @@ def create_app(
             status_code = 503 if "busy" in str(exc).lower() else 504 if "timed out" in str(exc).lower() else 500
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
+    @app.post("/api/gateways/invoke")
+    async def invoke_gateway(request: GatewayInvokeRequest) -> dict:
+        try:
+            return await run_in_threadpool(
+                app.state.runtime.invoke_gateway,
+                resource_name=request.resource_name or "",
+                tool_namespace=request.tool_namespace or "",
+                path=request.path or "",
+                params=dict(request.params),
+                query=request.query or "",
+                variables=dict(request.variables),
+                timeout_seconds=request.timeout_seconds,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/api/queries/{query_id}")
     async def get_query(query_id: str) -> dict:
         try:
-            return await asyncio.to_thread(app.state.runtime.get_query, query_id)
+            return await run_in_threadpool(app.state.runtime.get_query, query_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="query not found") from exc
 
     @app.get("/api/queries/{query_id}/report", response_class=PlainTextResponse)
     async def get_query_report(query_id: str) -> str:
         try:
-            return await asyncio.to_thread(app.state.runtime.get_query_report, query_id)
+            return await run_in_threadpool(app.state.runtime.get_query_report, query_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="report not found") from exc
 
@@ -70,7 +86,7 @@ def create_app(
     async def root():
         if not _CHAT_PAGE.exists():
             raise HTTPException(status_code=404, detail="chat page not found")
-        html = await asyncio.to_thread(_CHAT_PAGE.read_text, encoding="utf-8")
+        html = await run_in_threadpool(_CHAT_PAGE.read_text, encoding="utf-8")
         return HTMLResponse(content=html)
 
     return app

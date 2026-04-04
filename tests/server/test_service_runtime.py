@@ -135,6 +135,103 @@ def test_runtime_rejects_unknown_resource_filter_entries(tmp_path: Path) -> None
         )
 
 
+def test_runtime_resources_include_package_aware_summary_and_entry_fields(tmp_path: Path) -> None:
+    from drugclaw.service_runtime import DrugClawServiceRuntime
+
+    class _Entry:
+        def to_dict(self):
+            return {
+                "name": "PackageAware",
+                "status": "degraded",
+                "package_status": "degraded",
+                "package_components": [
+                    {
+                        "component_type": "knowhow_docs",
+                        "path_or_name": "/tmp/knowhow.md",
+                        "status": "missing_metadata",
+                        "reason": "missing local metadata: /tmp/knowhow.md",
+                    }
+                ],
+                "missing_components": ["knowhow_docs"],
+                "gateway_ready": True,
+            }
+
+    class _RegistryStub:
+        def summarize_registry(self):
+            return {
+                "total_resources": 1,
+                "enabled_resources": 1,
+                "status_counts": {
+                    "ready": 0,
+                    "degraded": 1,
+                    "missing_metadata": 0,
+                    "missing_dependency": 0,
+                    "disabled": 0,
+                },
+                "category_counts": {"dti": 1},
+                "package_status_counts": {
+                    "ready": 0,
+                    "degraded": 1,
+                    "missing_metadata": 0,
+                    "missing_dependency": 0,
+                    "disabled": 0,
+                },
+                "resources_with_knowhow": 0,
+                "gateway_ready_resources": 1,
+                "missing_component_counts": {"knowhow_docs": 1},
+            }
+
+        def get_all_resources(self):
+            return [_Entry()]
+
+    key_file = tmp_path / "navigator_api_keys.json"
+    _write_key_file(key_file)
+    runtime = DrugClawServiceRuntime(
+        config=Config(key_file=str(key_file)),
+        system=object(),
+        resource_registry=_RegistryStub(),
+    )
+
+    payload = runtime.resources()
+
+    assert payload["total_resources"] == 1
+    assert payload["enabled_resources"] == 1
+    assert payload["status_counts"]["degraded"] == 1
+    assert payload["category_counts"]["dti"] == 1
+    assert payload["package_status_counts"]["degraded"] == 1
+    assert payload["resources_with_knowhow"] == 0
+    assert payload["gateway_ready_resources"] == 1
+    assert payload["missing_component_counts"] == {"knowhow_docs": 1}
+    assert payload["resources"][0]["package_status"] == "degraded"
+    assert payload["resources"][0]["missing_components"] == ["knowhow_docs"]
+    assert payload["resources"][0]["gateway_ready"] is True
+
+
+def test_runtime_rejects_disabled_resource_filter_entries(tmp_path: Path) -> None:
+    from drugclaw.service_runtime import DrugClawServiceRuntime
+
+    class _RegistryStub:
+        def get_resource(self, name):
+            if name == "DeprecatedSkill":
+                return type("Entry", (), {"status": "disabled"})()
+            return None
+
+    key_file = tmp_path / "navigator_api_keys.json"
+    _write_key_file(key_file)
+    runtime = DrugClawServiceRuntime(
+        config=Config(key_file=str(key_file)),
+        system=object(),
+        resource_registry=_RegistryStub(),
+    )
+
+    with pytest.raises(ValueError, match="unusable"):
+        runtime.validate_request(
+            query="What are the known drug targets of imatinib?",
+            mode=ThinkingMode.SIMPLE.value,
+            resource_filter=["DeprecatedSkill"],
+        )
+
+
 def test_runtime_runs_query_and_returns_result(tmp_path: Path) -> None:
     from drugclaw.service_runtime import DrugClawServiceRuntime
 
@@ -260,6 +357,162 @@ def test_runtime_releases_semaphore_after_run_query(tmp_path: Path) -> None:
 
     assert semaphore.acquired is True
     assert semaphore.released is True
+
+
+def test_runtime_invokes_gateway_with_resource_name_or_namespace(tmp_path: Path) -> None:
+    from drugclaw.service_runtime import DrugClawServiceRuntime
+
+    class _GatewayInvokerStub:
+        def __init__(self):
+            self.calls = []
+
+        def invoke(
+            self,
+            *,
+            resource_name="",
+            tool_namespace="",
+            path="",
+            params=None,
+            query="",
+            variables=None,
+            timeout=10.0,
+            headers=None,
+        ):
+            self.calls.append(
+                {
+                    "resource_name": resource_name,
+                    "tool_namespace": tool_namespace,
+                    "path": path,
+                    "params": params,
+                    "query": query,
+                    "variables": variables,
+                    "timeout": timeout,
+                    "headers": headers,
+                }
+            )
+            return {"resource_name": resource_name or "Open Targets Platform", "ok": True}
+
+    key_file = tmp_path / "navigator_api_keys.json"
+    _write_key_file(key_file)
+    gateway_invoker = _GatewayInvokerStub()
+    runtime = DrugClawServiceRuntime(
+        config=Config(key_file=str(key_file)),
+        system=object(),
+        resource_registry=object(),
+        gateway_invoker=gateway_invoker,
+    )
+
+    result = runtime.invoke_gateway(
+        tool_namespace="open_targets.platform",
+        query="{ target { id } }",
+        variables={"id": "ENSG000001"},
+        timeout_seconds=4.5,
+    )
+
+    assert result == {"resource_name": "Open Targets Platform", "ok": True}
+    assert gateway_invoker.calls == [
+        {
+            "resource_name": "",
+            "tool_namespace": "open_targets.platform",
+            "path": "",
+            "params": None,
+            "query": "{ target { id } }",
+            "variables": {"id": "ENSG000001"},
+            "timeout": 4.5,
+            "headers": None,
+        }
+    ]
+
+
+def test_runtime_invoke_gateway_rewraps_gateway_errors_as_value_errors(tmp_path: Path) -> None:
+    from drugclaw.gateway_invoker import GatewayInvocationError
+    from drugclaw.service_runtime import DrugClawServiceRuntime
+
+    class _GatewayInvokerStub:
+        def invoke(self, **kwargs):
+            raise GatewayInvocationError("unknown gateway")
+
+    key_file = tmp_path / "navigator_api_keys.json"
+    _write_key_file(key_file)
+    runtime = DrugClawServiceRuntime(
+        config=Config(key_file=str(key_file)),
+        system=object(),
+        resource_registry=object(),
+        gateway_invoker=_GatewayInvokerStub(),
+    )
+
+    with pytest.raises(ValueError, match="unknown gateway"):
+        runtime.invoke_gateway(resource_name="Missing Gateway")
+
+
+def test_runtime_prefers_external_resource_gateway_when_configured(tmp_path: Path) -> None:
+    from drugclaw.service_runtime import DrugClawServiceRuntime
+
+    class _ExternalGatewayStub:
+        def __init__(self):
+            self.calls = []
+
+        def invoke(
+            self,
+            *,
+            resource_name="",
+            tool_namespace="",
+            path="",
+            params=None,
+            query="",
+            variables=None,
+            timeout=10.0,
+            headers=None,
+        ):
+            self.calls.append(
+                {
+                    "resource_name": resource_name,
+                    "tool_namespace": tool_namespace,
+                    "path": path,
+                    "params": params,
+                    "query": query,
+                    "variables": variables,
+                    "timeout": timeout,
+                    "headers": headers,
+                }
+            )
+            return {"resource_name": "Open Targets Platform", "via": "external_gateway"}
+
+    class _GatewayInvokerStub:
+        def invoke(self, **kwargs):
+            raise AssertionError("runtime should prefer external_resource_gateway over gateway_invoker")
+
+    key_file = tmp_path / "navigator_api_keys.json"
+    _write_key_file(key_file)
+    external_gateway = _ExternalGatewayStub()
+    runtime = DrugClawServiceRuntime(
+        config=Config(key_file=str(key_file)),
+        system=object(),
+        resource_registry=object(),
+        gateway_invoker=_GatewayInvokerStub(),
+        external_resource_gateway=external_gateway,
+    )
+
+    result = runtime.invoke_gateway(
+        tool_namespace="open_targets.platform",
+        query="{ target { id } }",
+        variables={"id": "ENSG000001"},
+        timeout_seconds=4.5,
+    )
+
+    assert result == {"resource_name": "Open Targets Platform", "via": "external_gateway"}
+    assert external_gateway.calls == [
+        {
+            "resource_name": "",
+            "tool_namespace": "open_targets.platform",
+            "path": "",
+            "params": None,
+            "query": "{ target { id } }",
+            "variables": {"id": "ENSG000001"},
+            "timeout": 4.5,
+            "headers": None,
+        }
+    ]
 
 
 def test_runtime_reports_busy_when_concurrency_limit_is_reached(tmp_path: Path) -> None:

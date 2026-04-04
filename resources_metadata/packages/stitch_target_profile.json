@@ -1,0 +1,13 @@
+{
+  "package_id": "stitch_target_profile",
+  "skill_name": "STITCH",
+  "protocol_docs": [
+    "resources_metadata/packages/stitch_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/stitch_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/dti/direct_targets_grounding.md"
+  ]
+}
