@@ -1,0 +1,13 @@
+{
+  "package_id": "ddinter_clinical",
+  "skill_name": "DDInter",
+  "protocol_docs": [
+    "resources_metadata/packages/ddinter_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/ddinter_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/ddi/clinical_ddi_prioritization.md"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "package_id": "chembl_core",
+  "skill_name": "ChEMBL",
+  "protocol_docs": [
+    "resources_metadata/packages/chembl_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/chembl_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/dti/direct_targets_grounding.md"
+  ]
+}

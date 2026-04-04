@@ -77,3 +77,24 @@ def test_build_task_aware_web_section_classifies_ddi_mechanistic_support() -> No
     assert lines == [
         "- Mechanistic support (DailyMed / dailymed.nlm.nih.gov): Warfarin label interaction precautions - Monitor INR closely when combined with CYP2C9 inhibitors because exposure may increase."
     ]
+
+
+def test_build_task_aware_web_section_uses_cross_check_heading_for_target_lookup() -> None:
+    section = build_task_aware_web_section(
+        "target_lookup",
+        [
+            {
+                "source": "PubMed",
+                "title": "Imatinib mesylate",
+                "url": "https://pubmed.ncbi.nlm.nih.gov/24756783/",
+                "snippet": "Review article describing established kinase targets of imatinib.",
+            }
+        ],
+    )
+
+    assert section is not None
+    heading, lines = section
+    assert heading == "Authority Cross-Check:"
+    assert lines == [
+        "- Supporting evidence (PubMed / pubmed.ncbi.nlm.nih.gov): Imatinib mesylate - Review article describing established kinase targets of imatinib."
+    ]

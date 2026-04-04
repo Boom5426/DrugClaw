@@ -72,7 +72,9 @@ def _task_heading(question_type: str) -> str:
         "adr": "Authority-First Safety Support:",
         "drug_repurposing": "Authority-First Repurposing Support:",
         "mechanism": "Authority-First Mechanistic Support:",
-        "target_lookup": "Authority-First Mechanistic Support:",
+        "target_lookup": "Authority Cross-Check:",
+        "direct_targets": "Authority Cross-Check:",
+        "target_profile": "Authority Cross-Check:",
     }.get(str(question_type or "").strip().lower(), "Authority-first web evidence:")
 
 

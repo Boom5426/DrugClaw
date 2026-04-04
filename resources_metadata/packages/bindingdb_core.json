@@ -1,0 +1,13 @@
+{
+  "package_id": "bindingdb_core",
+  "skill_name": "BindingDB",
+  "protocol_docs": [
+    "resources_metadata/packages/bindingdb_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/bindingdb_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/dti/direct_targets_grounding.md"
+  ]
+}

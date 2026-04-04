@@ -8,6 +8,8 @@ query_logs/
 self_bench_logs/
 .worktrees/
 resources_metadata/**
+!resources_metadata/packages/
+!resources_metadata/packages/**
 # Only commit curated minimal fixtures needed by examples/tests.
 !resources_metadata/drug_combination/
 !resources_metadata/drug_combination/CDCDB/

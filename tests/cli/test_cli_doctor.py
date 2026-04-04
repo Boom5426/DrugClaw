@@ -98,6 +98,70 @@ def test_doctor_registry_treats_optional_missing_metadata_as_warning(monkeypatch
     assert any(line.startswith("[OK] resource:PROMISCUOUS 2.0:") for line in lines)
 
 
+def test_doctor_registry_surfaces_package_status_and_missing_components(monkeypatch) -> None:
+    class _ResourceRegistryStub:
+        def summarize_registry(self):
+            return {
+                "total_resources": 1,
+                "enabled_resources": 1,
+                "status_counts": {
+                    "ready": 0,
+                    "degraded": 1,
+                    "missing_metadata": 0,
+                    "missing_dependency": 0,
+                    "disabled": 0,
+                },
+                "package_status_counts": {
+                    "ready": 0,
+                    "degraded": 1,
+                    "missing_metadata": 0,
+                    "missing_dependency": 0,
+                    "disabled": 0,
+                },
+                "resources_with_knowhow": 0,
+                "gateway_ready_resources": 1,
+                "missing_component_counts": {"knowhow_docs": 1},
+            }
+
+        def get_all_resources(self):
+            return [
+                type("Entry", (), {
+                    "name": "PackageAware",
+                    "category": "dti",
+                    "access_mode": "LOCAL_FILE",
+                    "status": "degraded",
+                    "status_reason": "missing local metadata: /tmp/knowhow.md",
+                    "package_id": "package_aware_bundle",
+                    "package_status": "degraded",
+                    "missing_components": ["knowhow_docs"],
+                    "has_knowhow": False,
+                    "gateway_ready": True,
+                    "enabled": True,
+                })(),
+            ]
+
+    monkeypatch.setattr(
+        cli,
+        "_load_registry_for_cli",
+        lambda key_file, strict_config=False: (object(), _ResourceRegistryStub()),
+    )
+
+    lines = cli._doctor_check_registry("navigator_api_keys.json")
+
+    assert any(line == "[OK] registry_package_status:degraded: 1" for line in lines)
+    assert any(line == "[OK] registry_resources_with_knowhow: 0" for line in lines)
+    assert any(line == "[OK] registry_gateway_ready_resources: 1" for line in lines)
+    assert any(
+        line.startswith("[WARN] resource:PackageAware:")
+        and "package_id=package_aware_bundle" in line
+        and "package_status=degraded" in line
+        and "missing_components=knowhow_docs" in line
+        and "has_knowhow=no" in line
+        and "gateway_ready=yes" in line
+        for line in lines
+    )
+
+
 def test_doctor_demo_check_uses_runtime_availability_for_local_skills(monkeypatch) -> None:
     class _SkillStub:
         access_mode = "LOCAL_FILE"

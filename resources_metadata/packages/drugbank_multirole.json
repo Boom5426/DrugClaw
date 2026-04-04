@@ -1,0 +1,18 @@
+{
+  "package_id": "drugbank_multirole",
+  "skill_name": "DrugBank",
+  "dataset_bundle": [
+    "resources_metadata/drug_knowledgebase/DrugBank/drugbank vocabulary.csv",
+    "resources_metadata/drug_knowledgebase/DrugBank/full database.xml"
+  ],
+  "protocol_docs": [
+    "resources_metadata/packages/drugbank_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/drugbank_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/dti/direct_targets_grounding.md",
+    "resources_metadata/knowhow/drug_repurposing/repurposing_evidence_thresholds.md"
+  ]
+}

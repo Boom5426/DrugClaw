@@ -1,0 +1,16 @@
+{
+  "package_id": "sider_safety",
+  "skill_name": "SIDER",
+  "dataset_bundle": [
+    "resources_metadata/adr/SIDER/meddra_all_se.tsv"
+  ],
+  "protocol_docs": [
+    "resources_metadata/packages/sider_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/sider_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/adr/adr_signal_tiering.md"
+  ]
+}

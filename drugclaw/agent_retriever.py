@@ -13,6 +13,8 @@ or results go directly as text to the Responder Agent (simple mode).
 import re
 from typing import List, Dict, Any, Optional
 
+from .knowhow_registry import KnowHowRegistry
+from .knowhow_retriever import KnowHowRetriever
 from .models import AgentState
 from .llm_client import LLMClient
 from .query_plan import (
@@ -23,6 +25,7 @@ from .query_plan import (
     is_direct_target_lookup,
     normalize_question_type,
     preferred_skills_for_question_type,
+    preferred_skills_for_task_type,
     prioritize_target_lookup_skills,
 )
 from .skills.registry import SkillRegistry
@@ -46,6 +49,8 @@ class RetrieverAgent:
         coder_agent: Optional[CoderAgent] = None,
         resource_registry=None,
         entity_resolver: Optional[EntityResolver] = None,
+        knowhow_registry: KnowHowRegistry | None = None,
+        knowhow_retriever: KnowHowRetriever | None = None,
     ):
         self.llm = llm_client
         self.skill_registry = skill_registry
@@ -54,6 +59,10 @@ class RetrieverAgent:
         self.entity_resolver = entity_resolver or EntityResolver(
             skill_registry=skill_registry,
             llm_client=llm_client,
+        )
+        self.knowhow_registry = knowhow_registry or KnowHowRegistry()
+        self.knowhow_retriever = knowhow_retriever or KnowHowRetriever(
+            self.knowhow_registry
         )
 
     # ------------------------------------------------------------------
@@ -194,9 +203,12 @@ Provide your plan in JSON format:
                 ),
                 resource_filter=resource_filter,
             )
+            planner_output = self._attach_knowhow(planner_output)
             state.query_plan = planner_output
 
         if isinstance(planner_output, QueryPlan):
+            planner_output = self._attach_knowhow(planner_output)
+            state.query_plan = planner_output
             query_plan = self._query_plan_to_retrieval_plan(
                 planner_output,
                 query=state.original_query,
@@ -210,11 +222,11 @@ Provide your plan in JSON format:
                 query_plan.get("key_entities", {}),
                 resolved_entities,
             )
-            state.query_plan = self._build_resource_filter_query_plan(
+            state.query_plan = self._attach_knowhow(self._build_resource_filter_query_plan(
                 effective_query,
                 key_entities=query_plan.get("key_entities", {}),
                 resource_filter=resource_filter,
-            )
+            ))
         else:
             query_plan = self._get_query_plan(
                 effective_query, omics_str, state.iteration,
@@ -240,6 +252,8 @@ Provide your plan in JSON format:
                 for step in query_plan.get("query_plan", [])
                 if step.get("database")
             ]
+
+        selected_skills = self._filter_available_skills(selected_skills)
 
         print(f"[Retriever Agent] Selected skills: {selected_skills}")
         print(f"[Retriever Agent] Key entities: {key_entities}")
@@ -297,7 +311,10 @@ Provide your plan in JSON format:
             coder_result, selected_skills, effective_query,
         )
         state.retrieval_diagnostics = self._build_retrieval_diagnostics(
-            coder_result, selected_skills,
+            coder_result,
+            selected_skills,
+        ) + self._build_knowhow_diagnostics(
+            getattr(state, "query_plan", None)
         )
         state.code_agent_code = "\n---\n".join(
             f"# Skill: {name}\n{info.get('code', '')}"
@@ -405,6 +422,12 @@ Provide your plan in JSON format:
             return "deterministic_only"
         return "auto"
 
+    def _attach_knowhow(self, plan: QueryPlan) -> QueryPlan:
+        try:
+            return self.knowhow_retriever.enrich_query_plan(plan)
+        except Exception:
+            return plan
+
     def _query_plan_to_retrieval_plan(
         self,
         plan: QueryPlan,
@@ -413,16 +436,25 @@ Provide your plan in JSON format:
         resource_filter: List[str],
     ) -> Dict[str, Any]:
         normalized_question_type = normalize_question_type(plan.question_type)
+        is_target_lookup = is_direct_target_lookup(
+            query=query,
+            question_type=plan.question_type,
+        )
+        selected_skill_limit = 4 if is_target_lookup else 3
         strong_path_question_types = {
             "drug_repurposing",
             "mechanism",
             "pharmacogenomics",
         }
-        plan_skill_hints = (
-            preferred_skills_for_question_type(normalized_question_type)
-            if normalized_question_type in strong_path_question_types
-            else list(plan.preferred_skills)
-        )
+        task_order_skill_hints = self._task_order_skill_hints(plan)
+        if plan.plan_type == "composite_query" and task_order_skill_hints:
+            plan_skill_hints = task_order_skill_hints
+        else:
+            plan_skill_hints = (
+                preferred_skills_for_question_type(normalized_question_type)
+                if normalized_question_type in strong_path_question_types
+                else list(plan.preferred_skills)
+            )
 
         if resource_filter:
             selected_skills = self._filter_available_skills(list(resource_filter))
@@ -457,13 +489,39 @@ Provide your plan in JSON format:
                 )
                 selected_skills = self._filter_available_skills(combined_skill_hints)
                 if selected_skills:
-                    selected_skills = selected_skills[:3]
+                    selected_skills = selected_skills[:selected_skill_limit]
+
+        if is_target_lookup and selected_skills:
+            selected_skills = prioritize_target_lookup_skills(selected_skills)[
+                :selected_skill_limit
+            ]
 
         return {
             "key_entities": dict(plan.entities),
             "selected_skills": selected_skills,
+            "selected_knowhow_doc_ids": list(plan.knowhow_doc_ids),
+            "selected_knowhow_hints": list(plan.knowhow_hints),
             "reasoning": "; ".join(plan.notes),
         }
+
+    @staticmethod
+    def _task_order_skill_hints(plan: QueryPlan) -> List[str]:
+        ordered: List[str] = []
+        tasks = [getattr(plan, "primary_task", None)] + list(
+            getattr(plan, "supporting_tasks", []) or []
+        )
+        for task in tasks:
+            if task is None:
+                continue
+            task_skills = list(getattr(task, "preferred_skills", []) or [])
+            if not task_skills:
+                task_skills = preferred_skills_for_task_type(
+                    getattr(task, "task_type", "")
+                )
+            for skill_name in task_skills:
+                if skill_name not in ordered:
+                    ordered.append(skill_name)
+        return ordered
 
     @staticmethod
     def _apply_query_skill_policy(
@@ -484,12 +542,35 @@ Provide your plan in JSON format:
             return []
 
         prioritized = self._prioritize_skill_names(skill_names, ready_only=True)
-        if prioritized:
-            return prioritized
+        available_ready = self._filter_runtime_executable_skills(
+            prioritized,
+            ready_only=True,
+        )
+        if available_ready:
+            return available_ready
 
         skill_names = self._prioritize_skill_names(skill_names, ready_only=False)
+        return self._filter_runtime_executable_skills(
+            skill_names,
+            ready_only=False,
+        )
+
+    def _filter_runtime_executable_skills(
+        self,
+        skill_names: List[str],
+        *,
+        ready_only: bool,
+    ) -> List[str]:
         available: List[str] = []
-        for skill_name in skill_names:
+        for skill_name in list(dict.fromkeys(skill_names)):
+            entry = self._get_resource_entry(skill_name)
+            if entry is not None:
+                status = str(getattr(entry, "status", "ready") or "ready")
+                if ready_only and status != "ready":
+                    continue
+                if status in {"disabled", "missing_dependency"}:
+                    continue
+
             try:
                 skill = self.skill_registry.get_skill(skill_name)
             except Exception:
@@ -528,7 +609,7 @@ Provide your plan in JSON format:
 
         ranked = []
         for index, skill_name in enumerate(unique_names):
-            entry = getattr(self.resource_registry, "get_resource", lambda _: None)(skill_name)
+            entry = self._get_resource_entry(skill_name)
             if entry is None:
                 continue
             status = getattr(entry, "status", "")
@@ -542,8 +623,19 @@ Provide your plan in JSON format:
                     index,
                     skill_name,
                 )
-            )
+        )
         return [name for _, _, _, name in sorted(ranked)]
+
+    def _get_resource_entry(self, skill_name: str):
+        if self.resource_registry is None:
+            return None
+        get_resource = getattr(self.resource_registry, "get_resource", None)
+        if not callable(get_resource):
+            return None
+        try:
+            return get_resource(skill_name)
+        except Exception:
+            return None
 
     @staticmethod
     def _status_priority(status: str) -> int:
@@ -561,6 +653,7 @@ Provide your plan in JSON format:
         order = {
             "REST_API": 0,
             "CLI": 0,
+            "GATEWAY": 0,
             "LOCAL_FILE": 1,
             "DATASET": 2,
         }
@@ -664,10 +757,22 @@ Respond in JSON:
         if not entities:
             entities = infer_entities_from_query(query)
         question_type = infer_question_type_from_query(query)
+        primary_task = fallback.primary_task.to_dict() if fallback.primary_task is not None else None
+        if primary_task is not None:
+            primary_task["entities"] = entities
+            primary_task["preferred_skills"] = list(resource_filter)
+
+        supporting_tasks = []
+        for task in fallback.supporting_tasks:
+            task_payload = task.to_dict()
+            task_payload["entities"] = entities
+            task_payload["preferred_skills"] = list(resource_filter)
+            supporting_tasks.append(task_payload)
+
         return QueryPlan(
             question_type=question_type or fallback.question_type,
             entities=entities,
-            subquestions=[query] if query else [],
+            subquestions=fallback.subquestions or ([query] if query else []),
             preferred_skills=list(resource_filter),
             preferred_evidence_types=[],
             requires_graph_reasoning=False,
@@ -675,6 +780,12 @@ Respond in JSON:
             requires_web_fallback=False,
             answer_risk_level="high" if question_type == "labeling" else fallback.answer_risk_level,
             notes=[f"resource_filter active: using {resource_filter}"],
+            plan_type=fallback.plan_type,
+            primary_task=primary_task,
+            supporting_tasks=supporting_tasks,
+            answer_contract=fallback.answer_contract.to_dict()
+            if fallback.answer_contract is not None
+            else None,
         )
 
     @staticmethod
@@ -750,6 +861,30 @@ Respond in JSON:
                     "records": len(info.get("records", []) or []),
                     "output": info.get("output", ""),
                     **nested,
+                }
+            )
+        return diagnostics
+
+    @staticmethod
+    def _build_knowhow_diagnostics(plan: Optional[QueryPlan]) -> List[Dict[str, Any]]:
+        if not isinstance(plan, QueryPlan):
+            return []
+
+        diagnostics: List[Dict[str, Any]] = []
+        for hint in list(getattr(plan, "knowhow_hints", []) or []):
+            if not isinstance(hint, dict):
+                continue
+            diagnostics.append(
+                {
+                    "kind": "knowhow",
+                    "task_id": str(hint.get("task_id", "")).strip(),
+                    "task_type": str(hint.get("task_type", "")).strip(),
+                    "doc_id": str(hint.get("doc_id", "")).strip(),
+                    "title": str(hint.get("title", "")).strip(),
+                    "risk_level": str(hint.get("risk_level", "")).strip(),
+                    "evidence_types": list(hint.get("evidence_types", []) or []),
+                    "declared_by_skills": list(hint.get("declared_by_skills", []) or []),
+                    "snippet": str(hint.get("snippet", "")).strip(),
                 }
             )
         return diagnostics

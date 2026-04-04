@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import drugclaw.resource_path_resolver as resolver
 from drugclaw.resource_path_resolver import (
     get_repo_root,
     resolve_path_value,
@@ -33,3 +34,35 @@ def test_resolve_skill_config_paths_preserves_explicit_absolute_paths(tmp_path: 
     resolved = resolve_skill_config_paths("RepoDB", {"csv_path": str(explicit)})
 
     assert resolved["csv_path"] == str(explicit)
+
+
+def test_discover_package_manifest_paths_scans_repo_local_packages_dir(tmp_path: Path) -> None:
+    packages_dir = tmp_path / "resources_metadata" / "packages"
+    packages_dir.mkdir(parents=True)
+    manifest_path = packages_dir / "example.json"
+    manifest_path.write_text('{"package_id":"example","skill_name":"Example"}', encoding="utf-8")
+
+    assert hasattr(resolver, "discover_package_manifest_paths")
+
+    paths = resolver.discover_package_manifest_paths(repo_root=tmp_path)
+
+    assert paths == [manifest_path]
+
+
+def test_resolve_package_component_paths_uses_repo_root_for_relative_entries(tmp_path: Path) -> None:
+    explicit = tmp_path / "already_absolute.md"
+
+    assert hasattr(resolver, "resolve_package_component_paths")
+
+    resolved = resolver.resolve_package_component_paths(
+        [
+            "resources_metadata/knowhow/adr/rules.md",
+            str(explicit),
+        ],
+        repo_root=tmp_path,
+    )
+
+    assert resolved == [
+        str(tmp_path / "resources_metadata" / "knowhow" / "adr" / "rules.md"),
+        str(explicit),
+    ]

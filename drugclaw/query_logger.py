@@ -115,6 +115,12 @@ class QueryLogger:
             ],
             "user_metadata": metadata or {},
         }
+        latest_scorecard = self.get_latest_scorecard_summary()
+        if latest_scorecard:
+            meta["recent_scorecard"] = latest_scorecard
+        query_plan_summary = self._summarize_query_plan(result.get("query_plan"))
+        if query_plan_summary:
+            meta["query_plan_summary"] = query_plan_summary
         (query_dir / "metadata.json").write_text(
             json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -152,6 +158,7 @@ class QueryLogger:
         evidence_data = {
             "retrieved_content": result.get("retrieved_content", []),
             "retrieved_text": result.get("retrieved_text", ""),
+            "retrieval_diagnostics": result.get("retrieval_diagnostics", []),
             "web_search_results": result.get("web_search_results", []),
         }
         (query_dir / "evidence.json").write_text(
@@ -191,6 +198,77 @@ class QueryLogger:
 
         print(f"[QueryLogger] Logged query: {query_id}  →  {query_dir}")
         return query_id
+
+    def save_scorecard_summary(
+        self,
+        summary: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        timestamp = datetime.now().isoformat()
+        payload = {
+            "timestamp": timestamp,
+            "summary": dict(summary or {}),
+            "metadata": dict(metadata or {}),
+        }
+        scorecard_dir = self.log_dir / "scorecards"
+        scorecard_dir.mkdir(parents=True, exist_ok=True)
+        timestamped_path = scorecard_dir / (
+            f"scorecard_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
+        )
+        latest_path = self.log_dir / "latest_scorecard.json"
+        rendered = json.dumps(payload, indent=2, ensure_ascii=False)
+        timestamped_path.write_text(rendered, encoding="utf-8")
+        latest_path.write_text(rendered, encoding="utf-8")
+        return str(latest_path)
+
+    def get_latest_scorecard_summary(self) -> Optional[Dict[str, Any]]:
+        latest_path = self.log_dir / "latest_scorecard.json"
+        if not latest_path.exists():
+            return None
+        return json.loads(latest_path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _summarize_query_plan(query_plan: Any) -> Dict[str, Any]:
+        if not query_plan:
+            return {}
+
+        def _read(value: Any, key: str, default: Any = None) -> Any:
+            if isinstance(value, dict):
+                return value.get(key, default)
+            return getattr(value, key, default)
+
+        primary_task = _read(query_plan, "primary_task", {}) or {}
+        supporting_tasks = list(_read(query_plan, "supporting_tasks", []) or [])
+        answer_contract = _read(query_plan, "answer_contract", {}) or {}
+        knowhow_hints = list(_read(query_plan, "knowhow_hints", []) or [])
+
+        summary = {
+            "plan_type": str(_read(query_plan, "plan_type", "") or "").strip(),
+            "question_type": str(_read(query_plan, "question_type", "") or "").strip(),
+            "primary_task_type": str(_read(primary_task, "task_type", "") or "").strip(),
+            "supporting_task_types": [
+                str(_read(task, "task_type", "") or "").strip()
+                for task in supporting_tasks
+                if str(_read(task, "task_type", "") or "").strip()
+            ],
+            "answer_section_order": list(_read(answer_contract, "section_order", []) or []),
+            "knowhow_doc_ids": list(_read(query_plan, "knowhow_doc_ids", []) or []),
+            "knowhow_hints": [
+                {
+                    "doc_id": str(_read(hint, "doc_id", "") or "").strip(),
+                    "task_id": str(_read(hint, "task_id", "") or "").strip(),
+                    "task_type": str(_read(hint, "task_type", "") or "").strip(),
+                    "declared_by_skills": [
+                        str(value).strip()
+                        for value in list(_read(hint, "declared_by_skills", []) or [])
+                        if str(value).strip()
+                    ],
+                }
+                for hint in knowhow_hints
+                if str(_read(hint, "doc_id", "") or "").strip()
+            ],
+        }
+        return {key: value for key, value in summary.items() if value not in ({}, [], "")}
 
     # ------------------------------------------------------------------
     # Retrieval

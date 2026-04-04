@@ -465,6 +465,26 @@ class DrugClawSystem:
             identifier_resolution.get("normalized_query", ""),
         )
 
+        merged_mentions: List[Dict[str, Any]] = []
+        seen_mentions: set[tuple[str, str, str, str]] = set()
+        for mention in list(identifier_resolution.get("drug_mentions", []) or []) + list(
+            name_resolution.get("drug_mentions", []) or []
+        ):
+            if not isinstance(mention, dict):
+                continue
+            mention_dict = dict(mention)
+            key = (
+                str(mention_dict.get("raw_text", "")).strip(),
+                str(mention_dict.get("mention_type", "")).strip(),
+                str(mention_dict.get("normalized_value", "")).strip(),
+                str(mention_dict.get("canonical_drug_name", "")).strip(),
+            )
+            if key in seen_mentions:
+                continue
+            seen_mentions.add(key)
+            merged_mentions.append(mention_dict)
+        merged_resolution["drug_mentions"] = merged_mentions
+
         canonical_drug_names = list(
             merged_resolution.get("canonical_drug_names", []) or []
         )
@@ -490,6 +510,31 @@ class DrugClawSystem:
         elif identifier_resolution.get("status") == "ambiguous":
             merged_resolution["status"] = "ambiguous"
 
+        original_query = str(merged_resolution.get("original_query", "")).strip()
+        unique_mention_types = {
+            str(mention.get("mention_type", "")).strip()
+            for mention in merged_mentions
+            if str(mention.get("mention_type", "")).strip()
+        }
+        mention_canonical_names = {
+            str(mention.get("canonical_drug_name", "")).strip()
+            for mention in merged_mentions
+            if str(mention.get("canonical_drug_name", "")).strip()
+        }
+        preserve_original_query = (
+            len(canonical_drug_names) == 1
+            and len(merged_mentions) >= 2
+            and len(unique_mention_types) >= 2
+            and mention_canonical_names == {canonical_drug_names[0]}
+        )
+        if preserve_original_query and original_query:
+            merged_resolution["normalized_query"] = original_query
+            merged_resolution["rewrite_applied"] = False
+        else:
+            merged_resolution["rewrite_applied"] = (
+                str(merged_resolution.get("normalized_query", "")).strip() != original_query
+            )
+
         return merged_resolution
 
     @staticmethod
@@ -502,7 +547,11 @@ class DrugClawSystem:
             if not values:
                 continue
 
-            existing_values = merged_entities.get(entity_type, [])
+            existing_values = [
+                value
+                for value in merged_entities.get(entity_type, [])
+                if str(value).strip().lower() != "unknown"
+            ]
             merged_values: List[str] = []
             for value in list(values) + list(existing_values):
                 text = str(value).strip()
@@ -564,7 +613,8 @@ class DrugClawSystem:
                     query
                 )
             input_resolution = self.drug_name_normalizer.normalize_query(
-                identifier_resolution.get("normalized_query") or query
+                identifier_resolution.get("normalized_query") or query,
+                original_query=query,
             )
             input_resolution = self._merge_input_resolution(
                 identifier_resolution,
@@ -648,6 +698,7 @@ class DrugClawSystem:
                     item.to_dict() if hasattr(item, "to_dict") else item
                     for item in final.get("evidence_items", [])
                 ],
+                "retrieval_diagnostics": final.get("retrieval_diagnostics", []),
                 "retrieved_text":     final.get("retrieved_text", ""),
                 "reflection_feedback": final.get("reflection_feedback", ""),
                 "web_search_results": final.get("web_search_results", []),

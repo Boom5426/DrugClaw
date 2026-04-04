@@ -1,0 +1,13 @@
+{
+  "package_id": "kegg_drug_ddi",
+  "skill_name": "KEGG Drug",
+  "protocol_docs": [
+    "resources_metadata/packages/kegg_drug_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/kegg_drug_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/ddi/clinical_ddi_prioritization.md"
+  ]
+}

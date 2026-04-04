@@ -5,6 +5,12 @@ import threading
 from typing import Any, Optional
 
 from .config import Config
+from .external_resource_gateway import (
+    ExternalResourceGatewayError,
+    ManagedExternalResourceGateway,
+)
+from .gateway_invoker import GatewayInvocationError, GatewayInvoker
+from .gateway_registry import build_gateway_registry
 from .main_system import DrugClawSystem
 from .models import ThinkingMode
 
@@ -16,6 +22,8 @@ class DrugClawServiceRuntime:
         config: Config,
         system: Optional[Any] = None,
         resource_registry: Optional[Any] = None,
+        gateway_invoker: Optional[Any] = None,
+        external_resource_gateway: Optional[Any] = None,
     ) -> None:
         self.config = config
         self.system = system or DrugClawSystem(config)
@@ -24,6 +32,8 @@ class DrugClawServiceRuntime:
             "resource_registry",
             None,
         )
+        self.gateway_invoker = gateway_invoker
+        self.external_resource_gateway = external_resource_gateway
         self._max_concurrency = max(1, int(config.SERVER_MAX_CONCURRENCY))
         self._timeout_seconds = max(1, int(config.SERVER_QUERY_TIMEOUT_SECONDS))
         self._max_query_chars = max(1, int(getattr(config, "SERVER_MAX_QUERY_CHARS", 5000)))
@@ -60,6 +70,13 @@ class DrugClawServiceRuntime:
         return {
             "total_resources": summary.get("total_resources", 0),
             "enabled_resources": summary.get("enabled_resources", 0),
+            "status_counts": summary.get("status_counts", {}),
+            "category_counts": summary.get("category_counts", {}),
+            "package_status_counts": summary.get("package_status_counts", {}),
+            "resources_with_knowhow": summary.get("resources_with_knowhow", 0),
+            "gateway_declared_resources": summary.get("gateway_declared_resources", 0),
+            "gateway_ready_resources": summary.get("gateway_ready_resources", 0),
+            "missing_component_counts": summary.get("missing_component_counts", {}),
             "resources": resources,
         }
 
@@ -107,6 +124,18 @@ class DrugClawServiceRuntime:
                 + ", ".join(unknown)
             )
 
+        unusable = []
+        for name in resource_filter:
+            entry = get_resource(name)
+            status = str(getattr(entry, "status", "ready") or "ready")
+            if status in {"disabled", "missing_dependency"}:
+                unusable.append(f"{name} ({status})")
+        if unusable:
+            raise ValueError(
+                "resource_filter contains unusable resources: "
+                + ", ".join(unusable)
+            )
+
     def _acquire_slot(self) -> None:
         if not self._semaphore.acquire(blocking=False):
             raise RuntimeError("service is busy")
@@ -151,6 +180,56 @@ class DrugClawServiceRuntime:
         finally:
             if not callback_registered:
                 self._release_slot()
+
+    def invoke_gateway(
+        self,
+        *,
+        resource_name: str = "",
+        tool_namespace: str = "",
+        path: str = "",
+        params: Optional[dict[str, Any]] = None,
+        query: str = "",
+        variables: Optional[dict[str, Any]] = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, Any]:
+        try:
+            gateway = self.external_resource_gateway
+            if gateway is not None:
+                return gateway.invoke(
+                    resource_name=resource_name,
+                    tool_namespace=tool_namespace,
+                    path=path,
+                    params=params,
+                    query=query,
+                    variables=variables,
+                    timeout=float(timeout_seconds),
+                )
+
+            invoker = self.gateway_invoker
+            if invoker is None:
+                if self.resource_registry is None:
+                    raise ValueError("gateway registry is unavailable")
+                gateway = ManagedExternalResourceGateway.from_resource_registry(self.resource_registry)
+                return gateway.invoke(
+                    resource_name=resource_name,
+                    tool_namespace=tool_namespace,
+                    path=path,
+                    params=params,
+                    query=query,
+                    variables=variables,
+                    timeout=float(timeout_seconds),
+                )
+            return invoker.invoke(
+                resource_name=resource_name,
+                tool_namespace=tool_namespace,
+                path=path,
+                params=params,
+                query=query,
+                variables=variables,
+                timeout=float(timeout_seconds),
+            )
+        except (GatewayInvocationError, ExternalResourceGatewayError) as exc:
+            raise ValueError(str(exc)) from exc
 
     def get_query(self, query_id: str) -> dict[str, Any]:
         logger = getattr(self.system, "logger", None)

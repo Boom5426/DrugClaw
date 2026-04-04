@@ -286,6 +286,11 @@ class RAGSkill(ABC):
         if self.access_mode == AccessMode.REST_API:
             tags.add("live_api")
 
+        package_flags = self._planner_package_flags()
+        for tag_name, enabled in package_flags.items():
+            if enabled:
+                tags.add(tag_name)
+
         return {
             "name": self.name,
             "subcategory": self.subcategory,
@@ -297,7 +302,28 @@ class RAGSkill(ABC):
             "implemented": bool(self._implemented),
             "local_data_ready": local_ready,
             "evidence_type": evidence_type,
+            **package_flags,
             "tags": sorted(tags),
+        }
+
+    def _planner_package_flags(self) -> Dict[str, bool]:
+        snapshot = getattr(self, "resource_package_snapshot", None)
+        if snapshot is None and isinstance(self.config, dict):
+            snapshot = self.config.get("resource_package")
+
+        def _read_flag(flag_name: str) -> bool:
+            if snapshot is None:
+                return False
+            if isinstance(snapshot, dict):
+                return bool(snapshot.get(flag_name, False))
+            return bool(getattr(snapshot, flag_name, False))
+
+        return {
+            "has_dataset_bundle": _read_flag("has_dataset_bundle"),
+            "has_protocol": _read_flag("has_protocol"),
+            "has_how_to": _read_flag("has_how_to"),
+            "has_knowhow": _read_flag("has_knowhow"),
+            "has_software_dependency": _read_flag("has_software_dependency"),
         }
 
     # ---- helpers ----------------------------------------------------------

@@ -89,6 +89,8 @@ class StructuredInputResolver:
         resolved_records: list[dict[str, str]] = []
         errors: list[dict[str, str]] = []
         canonical_drug_names: list[str] = []
+        drug_mentions: list[dict[str, str]] = []
+        seen_mentions: set[tuple[str, str, str, str]] = set()
 
         for identifier in detected_identifiers:
             records = self.source.resolve_identifier(
@@ -118,6 +120,24 @@ class StructuredInputResolver:
                     canonical_name = str(record_dict["canonical_drug_name"]).strip()
                     if canonical_name and canonical_name not in canonical_drug_names:
                         canonical_drug_names.append(canonical_name)
+                    mention_key = (
+                        identifier["raw_text"],
+                        identifier["type"],
+                        identifier["normalized_value"],
+                        canonical_name,
+                    )
+                    if canonical_name and mention_key not in seen_mentions:
+                        seen_mentions.add(mention_key)
+                        drug_mentions.append(
+                            {
+                                "raw_text": identifier["raw_text"],
+                                "mention_type": identifier["type"],
+                                "normalized_value": identifier["normalized_value"],
+                                "canonical_drug_name": canonical_name,
+                                "resolution_stage": "identifier",
+                                "source": str(record_dict.get("source", "")).strip(),
+                            }
+                        )
                 else:
                     errors.append(
                         {
@@ -155,4 +175,6 @@ class StructuredInputResolver:
             "detected_identifiers": detected_identifiers,
             "resolved_records": resolved_records,
             "errors": errors,
+            "drug_mentions": drug_mentions,
+            "rewrite_applied": normalized_query != original_query,
         }

@@ -1,0 +1,13 @@
+{
+  "package_id": "dailymed_labeling",
+  "skill_name": "DailyMed",
+  "protocol_docs": [
+    "resources_metadata/packages/dailymed_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/dailymed_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/drug_labeling/labeling_regulatory_priority.md"
+  ]
+}

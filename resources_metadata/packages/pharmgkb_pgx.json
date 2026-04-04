@@ -1,0 +1,13 @@
+{
+  "package_id": "pharmgkb_pgx",
+  "skill_name": "PharmGKB",
+  "protocol_docs": [
+    "resources_metadata/packages/pharmgkb_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/pharmgkb_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/pharmacogenomics/pgx_guidance_prioritization.md"
+  ]
+}

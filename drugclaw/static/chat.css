@@ -6,13 +6,16 @@ body {
 }
 
 .app {
-  display: flex;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
+  gap: 20px;
+  align-items: start;
+  max-width: 1280px;
+  margin: 0 auto;
   padding: 40px 16px;
 }
 
 .panel {
-  width: min(860px, 100%);
   background: #ffffff;
   border: 1px solid #d7e2ef;
   border-radius: 18px;
@@ -27,6 +30,28 @@ h1 {
 .subtitle {
   margin: 0 0 20px;
   color: #53657d;
+}
+
+.panel-query {
+  min-width: 0;
+}
+
+.panel-resources {
+  min-width: 0;
+  background:
+    linear-gradient(180deg, rgba(245, 249, 255, 0.96), rgba(255, 255, 255, 0.98)),
+    #ffffff;
+}
+
+.resource-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.resource-subtitle {
+  margin: 8px 0 0;
+  color: #53657d;
+  line-height: 1.5;
 }
 
 textarea {
@@ -61,4 +86,107 @@ button {
   margin-top: 24px;
   white-space: pre-wrap;
   line-height: 1.6;
+}
+
+.resource-summary {
+  margin-top: 20px;
+}
+
+.resource-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.resource-card {
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid #d6e2ef;
+  background: #f8fbff;
+}
+
+.resource-card-good {
+  background: #eef9f2;
+  border-color: #cbe6d4;
+}
+
+.resource-card-warning {
+  background: #fff7ec;
+  border-color: #f0d8b3;
+}
+
+.resource-card-label {
+  display: block;
+  font-size: 0.82rem;
+  color: #61748d;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.resource-card-value {
+  display: block;
+  margin-top: 6px;
+  font-size: 1rem;
+  color: #122033;
+}
+
+.resource-meta {
+  margin: 12px 2px 0;
+  color: #53657d;
+  line-height: 1.5;
+}
+
+.resource-list {
+  margin-top: 20px;
+  display: grid;
+  gap: 10px;
+  max-height: 680px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.resource-row {
+  border: 1px solid #d7e2ef;
+  border-radius: 14px;
+  padding: 14px;
+  background: #fff;
+}
+
+.resource-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.resource-row-detail {
+  color: #53657d;
+  line-height: 1.45;
+  font-size: 0.94rem;
+}
+
+.resource-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #edf3fa;
+  color: #2f4966;
+  font-size: 0.78rem;
+}
+
+.resource-empty {
+  color: #53657d;
+  margin: 0;
+}
+
+@media (max-width: 980px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-card-grid {
+    grid-template-columns: 1fr;
+  }
 }

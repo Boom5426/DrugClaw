@@ -12,9 +12,10 @@ Usage:
 import argparse
 import importlib
 import json
-import sys
 import time
 from pathlib import Path
+
+from drugclaw.eval_runner import run_self_bench
 
 BENCH_DIR = Path(__file__).resolve().parent
 
@@ -53,6 +54,14 @@ def main():
         help="Dataset names to benchmark (default: all)",
     )
     parser.add_argument(
+        "--task-types", nargs="+", default=None,
+        help="Optional QueryPlan-aligned task types to benchmark",
+    )
+    parser.add_argument(
+        "--plan-types", nargs="+", default=None,
+        help="Optional plan types to benchmark (for example: single_task)",
+    )
+    parser.add_argument(
         "--max-samples", type=int, default=0,
         help="Max samples per dataset (0 = use all available)",
     )
@@ -83,28 +92,39 @@ def main():
     if args.maskself is not None:
         maskself_val = args.maskself.lower() == "true"
 
-    all_results = {}
+    started_at = time.time()
+    summary = run_self_bench(
+        datasets=args.datasets,
+        task_types=args.task_types,
+        plan_types=args.plan_types,
+        key_file=args.key_file,
+        max_samples=args.max_samples,
+        maskself=maskself_val,
+        log_dir=args.log_dir,
+    )
+    all_results = dict(summary.dataset_results)
+
     for ds in args.datasets:
-        if ds not in ALL_DATASETS:
-            print(f"[WARN] Unknown dataset '{ds}', skipping.")
+        if ds not in all_results:
+            if ds not in ALL_DATASETS:
+                print(f"[WARN] Unknown dataset '{ds}', skipping.")
             continue
         print(f"\n{'='*60}")
         print(f"  Benchmarking: {ds}")
         print(f"{'='*60}")
-        t0 = time.time()
-        try:
-            result = run_one(ds, args.key_file, args.max_samples, maskself_val, args.log_dir)
-            result["elapsed_sec"] = round(time.time() - t0, 1)
+        result = dict(all_results[ds])
+        if "elapsed_sec" not in result:
+            result["elapsed_sec"] = round(time.time() - started_at, 1)
             all_results[ds] = result
+        if "error" not in result:
             print(f"  Accuracy: {result.get('accuracy', 'N/A')}")
             if "f1_macro" in result:
                 print(f"  F1 (macro): {result['f1_macro']}")
             print(f"  Samples: {result.get('total', '?')}  "
                   f"Correct: {result.get('correct', '?')}  "
                   f"Time: {result['elapsed_sec']}s")
-        except Exception as e:
-            print(f"  [ERROR] {e}")
-            all_results[ds] = {"error": str(e)}
+        else:
+            print(f"  [ERROR] {result['error']}")
 
     # ── Summary ──────────────────────────────────────────────────────
     print(f"\n{'='*60}")

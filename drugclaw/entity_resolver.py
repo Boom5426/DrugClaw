@@ -140,7 +140,11 @@ class EntityResolver:
 
         index: Dict[str, Set[str]] = {t: set() for t in _RESOLVABLE_TYPES}
 
-        local_skills = self._skill_registry.list_by_access_mode("LOCAL_FILE")
+        list_by_access_mode = getattr(self._skill_registry, "list_by_access_mode", None)
+        if callable(list_by_access_mode):
+            local_skills = list_by_access_mode("LOCAL_FILE")
+        else:
+            local_skills = []
         for skill_name in local_skills:
             skill = self._skill_registry.get_skill(skill_name)
             if skill is None:

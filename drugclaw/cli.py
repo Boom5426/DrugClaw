@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import List
 
 from .config import Config
+from .eval_runner import run_self_bench
 from .models import ThinkingMode
+from .query_logger import QueryLogger
 from .skills import build_default_registry
 from .resource_registry import build_resource_registry
 
@@ -178,6 +180,87 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to navigator_api_keys.json.",
     )
 
+    scorecard_parser = subparsers.add_parser(
+        "scorecard",
+        help="Run the unified self-bench scorecard summary.",
+    )
+    scorecard_parser.add_argument(
+        "--datasets",
+        nargs="+",
+        default=None,
+        help="Optional self-bench dataset names to include.",
+    )
+    scorecard_parser.add_argument(
+        "--task-types",
+        nargs="+",
+        default=None,
+        help="Optional QueryPlan-aligned task types to include.",
+    )
+    scorecard_parser.add_argument(
+        "--plan-types",
+        nargs="+",
+        default=None,
+        help="Optional plan types to include.",
+    )
+    scorecard_parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=0,
+        help="Max samples per dataset (0 = use all available).",
+    )
+    scorecard_parser.add_argument(
+        "--key-file",
+        default="navigator_api_keys.json",
+        help="Path to navigator_api_keys.json.",
+    )
+    scorecard_parser.add_argument(
+        "--maskself",
+        type=str,
+        default=None,
+        choices=["true", "false"],
+        help="Optional self-bench maskself setting.",
+    )
+    scorecard_parser.add_argument(
+        "--log-dir",
+        default="./query_logs",
+        help="Directory used to persist the latest scorecard summary.",
+    )
+    scorecard_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the scorecard summary as JSON.",
+    )
+    scorecard_parser.add_argument(
+        "--min-task-success-rate",
+        type=float,
+        default=None,
+        help="Optional release gate threshold for task_success_rate.",
+    )
+    scorecard_parser.add_argument(
+        "--min-evidence-quality-score",
+        type=float,
+        default=None,
+        help="Optional release gate threshold for evidence_quality_score.",
+    )
+    scorecard_parser.add_argument(
+        "--min-authority-source-rate",
+        type=float,
+        default=None,
+        help="Optional release gate threshold for authority_source_rate.",
+    )
+    scorecard_parser.add_argument(
+        "--min-knowhow-hit-rate",
+        type=float,
+        default=None,
+        help="Optional release gate threshold for knowhow_hit_rate.",
+    )
+    scorecard_parser.add_argument(
+        "--min-package-ready-rate",
+        type=float,
+        default=None,
+        help="Optional release gate threshold for package_ready_rate.",
+    )
+
     return parser
 
 
@@ -271,6 +354,51 @@ def _registry_summary_lines(summary: dict) -> List[str]:
                 str(summary["status_counts"].get(status_name, 0)),
             )
         )
+    for status_name in (
+        "ready",
+        "degraded",
+        "missing_metadata",
+        "missing_dependency",
+        "disabled",
+    ):
+        lines.append(
+            _status_line(
+                f"registry_package_status:{status_name}",
+                True,
+                str(summary.get("package_status_counts", {}).get(status_name, 0)),
+            )
+        )
+    lines.append(
+        _status_line(
+            "registry_resources_with_knowhow",
+            True,
+            str(summary.get("resources_with_knowhow", 0)),
+        )
+    )
+    lines.append(
+        _status_line(
+            "registry_gateway_declared_resources",
+            True,
+            str(summary.get("gateway_declared_resources", 0)),
+        )
+    )
+    lines.append(
+        _status_line(
+            "registry_gateway_ready_resources",
+            True,
+            str(summary.get("gateway_ready_resources", 0)),
+        )
+    )
+    for component_name, count in sorted(
+        dict(summary.get("missing_component_counts", {})).items()
+    ):
+        lines.append(
+            _status_line(
+                f"registry_missing_component:{component_name}",
+                True,
+                str(count),
+            )
+        )
     return lines
 
 
@@ -286,6 +414,33 @@ def _doctor_check_registry(key_file: str) -> List[str]:
             f"category={entry.category}; access={entry.access_mode}; "
             f"status={entry.status}; reason={entry.status_reason}"
         )
+        package_id = str(getattr(entry, "package_id", "") or "").strip()
+        package_status = getattr(entry, "package_status", "")
+        missing_components = list(getattr(entry, "missing_components", []) or [])
+        has_knowhow = bool(getattr(entry, "has_knowhow", False))
+        gateway_declared = bool(getattr(entry, "gateway_declared", False))
+        gateway_ready = bool(getattr(entry, "gateway_ready", True))
+        gateway_status = str(getattr(entry, "gateway_status", "") or "").strip()
+        gateway_transport = str(getattr(entry, "gateway_transport", "") or "").strip()
+        gateway_tool_namespace = str(getattr(entry, "gateway_tool_namespace", "") or "").strip()
+        gateway_missing_env = list(getattr(entry, "gateway_missing_env", []) or [])
+        if package_id:
+            detail += f"; package_id={package_id}"
+        if package_status:
+            detail += f"; package_status={package_status}"
+        if missing_components:
+            detail += f"; missing_components={','.join(missing_components)}"
+        detail += f"; has_knowhow={'yes' if has_knowhow else 'no'}"
+        detail += f"; gateway_declared={'yes' if gateway_declared else 'no'}"
+        detail += f"; gateway_ready={'yes' if gateway_ready else 'no'}"
+        if gateway_status:
+            detail += f"; gateway_status={gateway_status}"
+        if gateway_transport:
+            detail += f"; gateway_transport={gateway_transport}"
+        if gateway_tool_namespace:
+            detail += f"; gateway_tool_namespace={gateway_tool_namespace}"
+        if gateway_missing_env:
+            detail += f"; gateway_missing_env={','.join(gateway_missing_env)}"
         if not entry.enabled or entry.status == "ready":
             lines.append(_status_line(f"resource:{entry.name}", True, detail))
             continue
@@ -510,6 +665,203 @@ def _run_serve(host: str, port: int, key_file: str) -> int:
     return 0
 
 
+def _run_scorecard(
+    *,
+    datasets: List[str] | None,
+    task_types: List[str] | None,
+    plan_types: List[str] | None,
+    key_file: str,
+    max_samples: int,
+    maskself: bool | None,
+    log_dir: str,
+    json_output: bool,
+    min_task_success_rate: float | None,
+    min_evidence_quality_score: float | None,
+    min_authority_source_rate: float | None,
+    min_knowhow_hit_rate: float | None,
+    min_package_ready_rate: float | None,
+) -> int:
+    summary = run_self_bench(
+        datasets=datasets,
+        task_types=task_types,
+        plan_types=plan_types,
+        key_file=key_file,
+        max_samples=max_samples,
+        maskself=maskself,
+        log_dir=None,
+    )
+    release_gate_failures = _evaluate_scorecard_release_gates(
+        summary,
+        min_task_success_rate=min_task_success_rate,
+        min_evidence_quality_score=min_evidence_quality_score,
+        min_authority_source_rate=min_authority_source_rate,
+        min_knowhow_hit_rate=min_knowhow_hit_rate,
+        min_package_ready_rate=min_package_ready_rate,
+    )
+    release_gate_thresholds = {
+        "min_task_success_rate": min_task_success_rate,
+        "min_evidence_quality_score": min_evidence_quality_score,
+        "min_authority_source_rate": min_authority_source_rate,
+        "min_knowhow_hit_rate": min_knowhow_hit_rate,
+        "min_package_ready_rate": min_package_ready_rate,
+    }
+    scorecard_payload = _build_scorecard_payload(
+        summary,
+        release_gate_failures=release_gate_failures,
+        release_gate_thresholds=release_gate_thresholds,
+    )
+    logger = QueryLogger(log_dir=log_dir)
+    scorecard_path = logger.save_scorecard_summary(
+        scorecard_payload,
+        metadata={
+            "datasets": list(datasets or []),
+            "task_types": list(task_types or []),
+            "plan_types": list(plan_types or []),
+            "max_samples": max_samples,
+            "maskself": maskself,
+            "release_gates": release_gate_thresholds,
+        },
+    )
+
+    if json_output:
+        print(json.dumps(scorecard_payload, indent=2, ensure_ascii=False))
+    else:
+        print("[DrugClaw scorecard]")
+        print(f"total_cases={summary.total_cases}")
+        print(f"completed_cases={summary.completed_cases}")
+        print(f"failed_cases={summary.failed_cases}")
+        print(f"task_success_rate={summary.task_success_rate:.2f}")
+        print(f"evidence_quality_score={summary.evidence_quality_score:.2f}")
+        print(f"authority_source_rate={summary.authority_source_rate:.2f}")
+        print(f"knowhow_hit_rate={summary.knowhow_hit_rate:.2f}")
+        print(f"package_ready_rate={summary.package_ready_rate:.2f}")
+        task_type_breakdown = getattr(summary, "task_type_breakdown", {}) or {}
+        if task_type_breakdown:
+            print("[By task type]")
+            for task_type, metrics in sorted(task_type_breakdown.items()):
+                print(
+                    f"- {task_type}: success={float(metrics.get('task_success_rate', 0.0)):.2f} "
+                    f"evidence={float(metrics.get('evidence_quality_score', 0.0)):.2f} "
+                    f"total_cases={int(metrics.get('total_cases', 0))}"
+                )
+        dataset_breakdown = getattr(summary, "dataset_breakdown", {}) or {}
+        if dataset_breakdown:
+            print("[By dataset]")
+            for dataset_name, metrics in sorted(dataset_breakdown.items()):
+                print(
+                    f"- {dataset_name}: success={float(metrics.get('task_success_rate', 0.0)):.2f} "
+                    f"evidence={float(metrics.get('evidence_quality_score', 0.0)):.2f} "
+                    f"total_cases={int(metrics.get('total_cases', 0))}"
+                )
+        for dataset_name, result in sorted(summary.dataset_results.items()):
+            if "error" in result:
+                print(f"- {dataset_name}: ERROR={result['error']}")
+                continue
+            print(
+                f"- {dataset_name}: accuracy={result.get('accuracy', 0.0)} "
+                f"total={result.get('total', 0)}"
+            )
+        if release_gate_failures:
+            print("Release gate failures:")
+            for failure in release_gate_failures:
+                print(f"- {failure}")
+    print(f"Scorecard summary saved to {scorecard_path}")
+    return 0 if summary.failed_cases == 0 and not release_gate_failures else 1
+
+
+def _build_scorecard_payload(
+    summary,
+    *,
+    release_gate_failures: List[str],
+    release_gate_thresholds: dict,
+) -> dict:
+    payload = summary.to_dict()
+    payload["release_gate"] = {
+        "passed": not release_gate_failures,
+        "failures": list(release_gate_failures),
+        "thresholds": dict(release_gate_thresholds),
+        "by_dataset": _build_release_gate_breakdown(
+            payload.get("dataset_breakdown"),
+            release_gate_thresholds=release_gate_thresholds,
+        ),
+        "by_task_type": _build_release_gate_breakdown(
+            payload.get("task_type_breakdown"),
+            release_gate_thresholds=release_gate_thresholds,
+        ),
+    }
+    return payload
+
+
+def _evaluate_scorecard_release_gates(
+    summary,
+    *,
+    min_task_success_rate: float | None,
+    min_evidence_quality_score: float | None,
+    min_authority_source_rate: float | None,
+    min_knowhow_hit_rate: float | None,
+    min_package_ready_rate: float | None,
+) -> List[str]:
+    thresholds = [
+        ("task_success_rate", _read_scorecard_metric(summary, "task_success_rate"), min_task_success_rate),
+        (
+            "evidence_quality_score",
+            _read_scorecard_metric(summary, "evidence_quality_score"),
+            min_evidence_quality_score,
+        ),
+        (
+            "authority_source_rate",
+            _read_scorecard_metric(summary, "authority_source_rate"),
+            min_authority_source_rate,
+        ),
+        ("knowhow_hit_rate", _read_scorecard_metric(summary, "knowhow_hit_rate"), min_knowhow_hit_rate),
+        (
+            "package_ready_rate",
+            _read_scorecard_metric(summary, "package_ready_rate"),
+            min_package_ready_rate,
+        ),
+    ]
+    failures: List[str] = []
+    for name, observed, minimum in thresholds:
+        if minimum is None:
+            continue
+        if float(observed) < float(minimum):
+            failures.append(f"{name}={float(observed):.2f} < {float(minimum):.2f}")
+    return failures
+
+
+def _read_scorecard_metric(summary, key: str) -> float:
+    if isinstance(summary, dict):
+        value = summary.get(key, 0.0)
+    else:
+        value = getattr(summary, key, 0.0)
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_release_gate_breakdown(
+    breakdown: dict | None,
+    *,
+    release_gate_thresholds: dict,
+) -> dict:
+    rendered: dict = {}
+    for key, metrics in sorted((breakdown or {}).items()):
+        failures = _evaluate_scorecard_release_gates(
+            metrics or {},
+            min_task_success_rate=release_gate_thresholds.get("min_task_success_rate"),
+            min_evidence_quality_score=release_gate_thresholds.get("min_evidence_quality_score"),
+            min_authority_source_rate=release_gate_thresholds.get("min_authority_source_rate"),
+            min_knowhow_hit_rate=release_gate_thresholds.get("min_knowhow_hit_rate"),
+            min_package_ready_rate=release_gate_thresholds.get("min_package_ready_rate"),
+        )
+        rendered[str(key)] = {
+            "passed": not failures,
+            "failures": failures,
+        }
+    return rendered
+
+
 def _print_evidence_summary(result: dict) -> None:
     structured = result.get("final_answer_structured") or {}
     if not structured:
@@ -562,7 +914,23 @@ def _print_plan_summary(result: dict) -> None:
         return
 
     print("\n== Query Plan ==")
+    if plan.get("plan_type"):
+        print(f"plan_type={plan.get('plan_type')}")
     print(f"question_type={plan.get('question_type', 'unknown')}")
+
+    primary_task = plan.get("primary_task") or {}
+    if primary_task:
+        print(f"primary_task={primary_task.get('task_type', 'unknown')}")
+
+    supporting_tasks = plan.get("supporting_tasks") or []
+    if supporting_tasks:
+        supporting_labels = [
+            str(task.get("task_type", "")).strip()
+            for task in supporting_tasks
+            if str(task.get("task_type", "")).strip()
+        ]
+        if supporting_labels:
+            print("supporting_tasks=" + ", ".join(supporting_labels))
 
     preferred_skills = plan.get("preferred_skills", [])
     if preferred_skills:
@@ -621,6 +989,26 @@ def main(argv: List[str] | None = None) -> int:
 
     if args.command == "serve":
         return _run_serve(args.host, args.port, args.key_file)
+
+    if args.command == "scorecard":
+        maskself = None
+        if args.maskself is not None:
+            maskself = args.maskself.lower() == "true"
+        return _run_scorecard(
+            datasets=args.datasets,
+            task_types=args.task_types,
+            plan_types=args.plan_types,
+            key_file=args.key_file,
+            max_samples=args.max_samples,
+            maskself=maskself,
+            log_dir=args.log_dir,
+            json_output=args.json,
+            min_task_success_rate=args.min_task_success_rate,
+            min_evidence_quality_score=args.min_evidence_quality_score,
+            min_authority_source_rate=args.min_authority_source_rate,
+            min_knowhow_hit_rate=args.min_knowhow_hit_rate,
+            min_package_ready_rate=args.min_package_ready_rate,
+        )
 
     preset = DEMO_PRESETS[args.preset]
     print(f"[DrugClaw demo] preset={args.preset} - {preset['description']}")
