@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -66,7 +65,22 @@ def _all_have_fields(results: list[Any]) -> tuple[bool, list[str]]:
     return (len(problems) == 0, problems)
 
 
-def test_sematyp() -> SkillReport:
+def _format_report_failure(report: SkillReport) -> str:
+    payload = {
+        "name": report.name,
+        "status": report.status,
+        "problems_found": report.problems_found,
+        "minimal_fixes_suggested": report.minimal_fixes_suggested,
+        "sample_outputs": report.sample_outputs,
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def _assert_report_passes(report: SkillReport) -> None:
+    assert report.status == "PASS", _format_report_failure(report)
+
+
+def _run_sematyp() -> SkillReport:
     commands = [
         "python tools/test_skills_66_68.py",
         "discover local SemaTyP resource via skillexamples/66_SemaTyP.py or resources_metadata/",
@@ -155,7 +169,11 @@ def test_sematyp() -> SkillReport:
         pass
 
 
-def test_cpic() -> SkillReport:
+def test_sematyp() -> None:
+    _assert_report_passes(_run_sematyp())
+
+
+def _run_cpic() -> SkillReport:
     commands = ["python tools/test_skills_66_68.py"]
     checks = [
         "import CPICSkill",
@@ -194,7 +212,11 @@ def test_cpic() -> SkillReport:
     return SkillReport("67 CPIC", status, commands, checks, sample, problems, fixes)
 
 
-def test_kegg() -> SkillReport:
+def test_cpic() -> None:
+    _assert_report_passes(_run_cpic())
+
+
+def _run_kegg() -> SkillReport:
     commands = ["python tools/test_skills_66_68.py"]
     checks = [
         "import KEGGDrugSkill",
@@ -233,9 +255,13 @@ def test_kegg() -> SkillReport:
     return SkillReport("68 KEGG Drug", status, commands, checks, sample, problems, fixes)
 
 
+def test_kegg() -> None:
+    _assert_report_passes(_run_kegg())
+
+
 def main() -> int:
     sys.path.insert(0, str(ROOT))
-    reports = [test_sematyp(), test_cpic(), test_kegg()]
+    reports = [_run_sematyp(), _run_cpic(), _run_kegg()]
     overall_status = "PASS" if all(r.status == "PASS" for r in reports) else "FAIL"
     payload = {
         "status": overall_status,
