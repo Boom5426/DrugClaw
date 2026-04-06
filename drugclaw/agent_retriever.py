@@ -28,6 +28,7 @@ from .query_plan import (
     preferred_skills_for_question_type,
     preferred_skills_for_task_type,
     prioritize_target_lookup_skills,
+    uses_fallback_preferred_skills,
 )
 from .skills.registry import SkillRegistry
 from .agent_coder import CoderAgent
@@ -460,18 +461,13 @@ Provide your plan in JSON format:
         selected_skill_limit = 4 if is_target_lookup else 3
         if normalized_question_type == "drug_repurposing":
             selected_skill_limit = 4
-        strong_path_question_types = {
-            "drug_repurposing",
-            "mechanism",
-            "pharmacogenomics",
-        }
         task_order_skill_hints = self._task_order_skill_hints(plan)
         if plan.plan_type == "composite_query" and task_order_skill_hints:
             plan_skill_hints = task_order_skill_hints
         else:
             plan_skill_hints = (
                 preferred_skills_for_question_type(normalized_question_type)
-                if normalized_question_type in strong_path_question_types
+                if uses_fallback_preferred_skills(normalized_question_type)
                 else list(plan.preferred_skills)
             )
 
@@ -481,7 +477,10 @@ Provide your plan in JSON format:
             selected_skills = self._select_repurposing_skills(selected_skill_limit)
         elif plan.plan_type == "composite_query":
             selected_skills = self._select_composite_skills(plan, max(selected_skill_limit, 4))
-        elif normalized_question_type in {"mechanism", "pharmacogenomics"}:
+        elif (
+            uses_fallback_preferred_skills(normalized_question_type)
+            and normalized_question_type != "drug_repurposing"
+        ):
             selected_skills = self._filter_available_skills(plan_skill_hints)[:3]
         else:
             explicit_plan_skills = self._filter_available_skills(plan_skill_hints)
@@ -672,14 +671,18 @@ Provide your plan in JSON format:
             prioritized,
             ready_only=True,
         )
-        if available_ready:
-            return available_ready
-
-        skill_names = self._prioritize_skill_names(skill_names, ready_only=False)
-        return self._filter_runtime_executable_skills(
-            skill_names,
+        all_available = self._filter_runtime_executable_skills(
+            self._prioritize_skill_names(skill_names, ready_only=False),
             ready_only=False,
         )
+        if not available_ready:
+            return all_available
+
+        merged = list(available_ready)
+        for skill_name in all_available:
+            if skill_name not in merged:
+                merged.append(skill_name)
+        return merged
 
     def _filter_runtime_executable_skills(
         self,

@@ -20,6 +20,10 @@ class EvalExpectation:
     expected_evidence_types: List[str] = field(default_factory=list)
     expected_resources: List[str] = field(default_factory=list)
     expected_answer_sections: List[str] = field(default_factory=list)
+    must_hit_patterns: List[List[str]] = field(default_factory=list)
+    hard_fail_patterns: List[str] = field(default_factory=list)
+    rerun_policy: str = "on_demand"
+    required_metadata_keys: List[str] = field(default_factory=list)
     scorer: str = "classification_exact"
     gold_notes: str = ""
 
@@ -32,6 +36,19 @@ class EvalExpectation:
         )
         object.__setattr__(
             self, "expected_answer_sections", _dedupe_strings(list(self.expected_answer_sections))
+        )
+        normalized_must_hit_patterns = [
+            _dedupe_strings(list(group))
+            for group in list(self.must_hit_patterns)
+            if _dedupe_strings(list(group))
+        ]
+        object.__setattr__(self, "must_hit_patterns", normalized_must_hit_patterns)
+        object.__setattr__(
+            self, "hard_fail_patterns", _dedupe_strings(list(self.hard_fail_patterns))
+        )
+        object.__setattr__(self, "rerun_policy", str(self.rerun_policy or "on_demand").strip() or "on_demand")
+        object.__setattr__(
+            self, "required_metadata_keys", _dedupe_strings(list(self.required_metadata_keys))
         )
         object.__setattr__(self, "scorer", str(self.scorer or "classification_exact").strip())
         object.__setattr__(self, "gold_notes", str(self.gold_notes or "").strip())

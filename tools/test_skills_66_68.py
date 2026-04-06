@@ -16,13 +16,9 @@ This script prefers real external/resource paths over synthetic fixtures.
 from __future__ import annotations
 
 import importlib
-import io
 import json
 import os
-import shutil
 import sys
-import tempfile
-from contextlib import redirect_stdout
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -73,7 +69,7 @@ def _all_have_fields(results: list[Any]) -> tuple[bool, list[str]]:
 def test_sematyp() -> SkillReport:
     commands = [
         "python tools/test_skills_66_68.py",
-        "download via skillexamples/66_SemaTyP.py",
+        "discover local SemaTyP resource via skillexamples/66_SemaTyP.py or resources_metadata/",
     ]
     checks = [
         "import SemaTyPSkill",
@@ -90,30 +86,38 @@ def test_sematyp() -> SkillReport:
     skill_cls = getattr(mod, "SemaTyPSkill")
 
     example_mod = importlib.import_module("skillexamples.66_SemaTyP")
-    tmp_dir = Path(tempfile.mkdtemp(prefix="sematyp_test_"))
     csv_candidate: str | None = None
 
+    candidate_roots = []
+    example_data_dir = Path(getattr(example_mod, "DATA_DIR", "") or "")
+    if str(example_data_dir):
+        candidate_roots.append(example_data_dir)
+    candidate_roots.append(ROOT / "resources_metadata" / "drug_disease" / "SemaTyP")
+
     try:
-        # Use the example's real download path.
-        example_mod.OUTPUT_DIR = str(tmp_dir / "download")
-        with redirect_stdout(io.StringIO()):
-            downloaded = example_mod.download_sematyp()
-        sample["downloaded"] = downloaded
+        sample["candidate_roots"] = [str(path) for path in candidate_roots]
 
-        extracted_root = Path(example_mod.OUTPUT_DIR)
-        sample["extracted_root"] = str(extracted_root)
-
-        for p in extracted_root.rglob("*"):
-            if p.is_file() and p.suffix.lower() in {".csv", ".tsv", ".txt"}:
+        for root in candidate_roots:
+            if not root.exists():
+                continue
+            for p in root.rglob("*"):
+                if not (p.is_file() and p.suffix.lower() in {".csv", ".tsv", ".txt"}):
+                    continue
                 try:
                     head = p.read_text(encoding="utf-8", errors="ignore").splitlines()[:3]
                 except Exception:
                     continue
                 joined = " | ".join(head).lower()
-                if any(tok in joined for tok in ["subject", "predicate", "object", "drug", "disease", "head", "tail"]):
-                    csv_candidate = str(p)
-                    sample["candidate_preview"] = head
-                    break
+                if not any(
+                    tok in joined for tok in ["subject", "predicate", "object", "drug", "disease", "head", "tail"]
+                ):
+                    continue
+                csv_candidate = str(p)
+                sample["candidate_preview"] = head
+                sample["selected_root"] = str(root)
+                break
+            if csv_candidate:
+                break
 
         sample["csv_candidate"] = csv_candidate
 
@@ -129,13 +133,13 @@ def test_sematyp() -> SkillReport:
         sample["sample_results"] = [_rr_to_dict(r) for r in results[:2]]
 
         if not csv_candidate:
-            problems.append("No real triplet file matching the runtime skill schema was found in the downloaded SemaTyP archive.")
-            fixes.append("Update 66_SemaTyP.py or README to point to the actual triplet file used by SemaTyPSkill.")
+            problems.append("No real triplet file matching the runtime skill schema was found in local SemaTyP resources.")
+            fixes.append("Point 66_SemaTyP.py / sematyp example docs to the repo-local triplet file used by SemaTyPSkill.")
             fixes.append("Alternatively add a loader config example showing the exact CSV/TSV path and delimiter.")
             return SkillReport("66 SemaTyP", "FAIL", commands, checks, sample, problems, fixes)
 
         if not available:
-            problems.append("Skill imported but is_available() returned False with the real downloaded resource.")
+            problems.append("Skill imported but is_available() returned False with the discovered local resource.")
         if not results:
             problems.append("retrieve(...) returned an empty list with README-style input.")
         else:
@@ -145,10 +149,10 @@ def test_sematyp() -> SkillReport:
 
         status = "PASS" if not problems else "FAIL"
         if problems:
-            fixes.append("Verify the archive actually contains drug-disease triplets with headers expected by SemaTyPSkill.")
+            fixes.append("Verify local SemaTyP resources contain triplets with headers expected by SemaTyPSkill.")
         return SkillReport("66 SemaTyP", status, commands, checks, sample, problems, fixes)
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        pass
 
 
 def test_cpic() -> SkillReport:

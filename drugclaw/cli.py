@@ -4,13 +4,14 @@ import argparse
 import json
 import logging
 import os
+import subprocess
 import sys
 from types import SimpleNamespace
 from pathlib import Path
 from typing import List
 
 from .config import Config
-from .eval_runner import run_self_bench
+from .eval_runner import run_cli_usability_min_pack, run_self_bench
 from .models import ThinkingMode
 from .query_logger import QueryLogger
 from .skills import build_default_registry
@@ -185,6 +186,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the unified self-bench scorecard summary.",
     )
     scorecard_parser.add_argument(
+        "--suite",
+        choices=["self_bench", "cli_usability_min_pack"],
+        default="self_bench",
+        help="Scorecard suite to evaluate.",
+    )
+    scorecard_parser.add_argument(
         "--datasets",
         nargs="+",
         default=None,
@@ -333,6 +340,45 @@ def _build_system(key_file: str):
 
     config = Config(key_file=key_file)
     return DrugClawSystem(config)
+
+
+def _read_key_file_metadata(key_file: str) -> dict:
+    key_path = Path(key_file).expanduser()
+    if not key_path.is_absolute():
+        key_path = (Path.cwd() / key_path).resolve()
+    if not key_path.exists():
+        return {}
+    try:
+        payload = json.loads(key_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return {
+        "base_url": str(payload.get("base_url", "") or "").strip(),
+        "model": str(payload.get("model", "") or "").strip(),
+    }
+
+
+def _read_git_sha() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return ""
+
+
+def _build_runtime_metadata(key_file: str, *, suite_name: str) -> dict:
+    key_file_metadata = _read_key_file_metadata(key_file)
+    return {
+        "git_sha": _read_git_sha(),
+        "model": key_file_metadata.get("model", ""),
+        "base_url": key_file_metadata.get("base_url", ""),
+        "doctor_summary": "not_run",
+        "network_notes": "cli_local_run",
+        "suite_name": suite_name,
+    }
 
 
 def _registry_summary_lines(summary: dict) -> List[str]:
@@ -619,11 +665,13 @@ def _run_query(
     save_md_report: bool = False,
 ) -> int:
     system = _build_system(key_file)
+    runtime_metadata = _build_runtime_metadata(key_file, suite_name="manual_query")
 
     result = system.query(
         query,
         thinking_mode=thinking_mode,
         resource_filter=resource_filter or [],
+        metadata=runtime_metadata,
         verbose=debug_agents,
         save_md_report=save_md_report,
     )
@@ -660,6 +708,7 @@ def _run_serve(host: str, port: int, key_file: str) -> int:
 
 def _run_scorecard(
     *,
+    suite: str,
     datasets: List[str] | None,
     task_types: List[str] | None,
     plan_types: List[str] | None,
@@ -674,15 +723,18 @@ def _run_scorecard(
     min_knowhow_hit_rate: float | None,
     min_package_ready_rate: float | None,
 ) -> int:
-    summary = run_self_bench(
-        datasets=datasets,
-        task_types=task_types,
-        plan_types=plan_types,
-        key_file=key_file,
-        max_samples=max_samples,
-        maskself=maskself,
-        log_dir=None,
-    )
+    if suite == "cli_usability_min_pack":
+        summary = run_cli_usability_min_pack(log_dir=log_dir)
+    else:
+        summary = run_self_bench(
+            datasets=datasets,
+            task_types=task_types,
+            plan_types=plan_types,
+            key_file=key_file,
+            max_samples=max_samples,
+            maskself=maskself,
+            log_dir=None,
+        )
     release_gate_failures = _evaluate_scorecard_release_gates(
         summary,
         min_task_success_rate=min_task_success_rate,
@@ -691,7 +743,10 @@ def _run_scorecard(
         min_knowhow_hit_rate=min_knowhow_hit_rate,
         min_package_ready_rate=min_package_ready_rate,
     )
+    suite_specific_release_gates = _evaluate_suite_specific_release_gates(summary, suite=suite)
+    release_gate_failures.extend(suite_specific_release_gates["overall"])
     release_gate_thresholds = {
+        "suite": suite,
         "min_task_success_rate": min_task_success_rate,
         "min_evidence_quality_score": min_evidence_quality_score,
         "min_authority_source_rate": min_authority_source_rate,
@@ -702,11 +757,13 @@ def _run_scorecard(
         summary,
         release_gate_failures=release_gate_failures,
         release_gate_thresholds=release_gate_thresholds,
+        suite_specific_release_gates=suite_specific_release_gates,
     )
     logger = QueryLogger(log_dir=log_dir)
     scorecard_path = logger.save_scorecard_summary(
         scorecard_payload,
         metadata={
+            "suite": suite,
             "datasets": list(datasets or []),
             "task_types": list(task_types or []),
             "plan_types": list(plan_types or []),
@@ -767,8 +824,10 @@ def _build_scorecard_payload(
     *,
     release_gate_failures: List[str],
     release_gate_thresholds: dict,
+    suite_specific_release_gates: dict | None = None,
 ) -> dict:
     payload = summary.to_dict()
+    payload["suite"] = release_gate_thresholds.get("suite", "")
     payload["release_gate"] = {
         "passed": not release_gate_failures,
         "failures": list(release_gate_failures),
@@ -776,10 +835,12 @@ def _build_scorecard_payload(
         "by_dataset": _build_release_gate_breakdown(
             payload.get("dataset_breakdown"),
             release_gate_thresholds=release_gate_thresholds,
+            suite_specific_failures=(suite_specific_release_gates or {}).get("by_dataset"),
         ),
         "by_task_type": _build_release_gate_breakdown(
             payload.get("task_type_breakdown"),
             release_gate_thresholds=release_gate_thresholds,
+            suite_specific_failures=(suite_specific_release_gates or {}).get("by_task_type"),
         ),
     }
     return payload
@@ -837,6 +898,7 @@ def _build_release_gate_breakdown(
     breakdown: dict | None,
     *,
     release_gate_thresholds: dict,
+    suite_specific_failures: dict | None = None,
 ) -> dict:
     rendered: dict = {}
     for key, metrics in sorted((breakdown or {}).items()):
@@ -848,11 +910,42 @@ def _build_release_gate_breakdown(
             min_knowhow_hit_rate=release_gate_thresholds.get("min_knowhow_hit_rate"),
             min_package_ready_rate=release_gate_thresholds.get("min_package_ready_rate"),
         )
+        failures.extend(list((suite_specific_failures or {}).get(str(key), [])))
         rendered[str(key)] = {
             "passed": not failures,
             "failures": failures,
         }
     return rendered
+
+
+def _evaluate_suite_specific_release_gates(summary, *, suite: str) -> dict:
+    empty = {"overall": [], "by_dataset": {}, "by_task_type": {}}
+    if suite != "cli_usability_min_pack":
+        return empty
+    overall: List[str] = []
+    by_dataset: dict[str, list[str]] = {}
+    by_task_type: dict[str, list[str]] = {}
+    for score in getattr(summary, "scores", []) or []:
+        case_failures: List[str] = []
+        if getattr(score, "error", ""):
+            case_failures.append(f"case_failed:{score.task_id}")
+        elif not bool(getattr(score, "passed", False)):
+            case_failures.append(f"case_failed:{score.task_id}")
+        false_positive = _read_scorecard_metric(getattr(score, "metrics", {}) or {}, "false_positive_detected")
+        if false_positive > 0.0:
+            case_failures.append(f"false_positive_detected:{score.task_id}")
+        if not case_failures:
+            continue
+        overall.extend(case_failures)
+        dataset_name = str(getattr(score, "dataset_name", "") or getattr(score, "task_id", ""))
+        task_type = str(getattr(score, "task_type", "") or "unknown")
+        by_dataset.setdefault(dataset_name, []).extend(case_failures)
+        by_task_type.setdefault(task_type, []).extend(case_failures)
+    return {
+        "overall": overall,
+        "by_dataset": by_dataset,
+        "by_task_type": by_task_type,
+    }
 
 
 def _print_evidence_summary(result: dict) -> None:
@@ -988,6 +1081,7 @@ def main(argv: List[str] | None = None) -> int:
         if args.maskself is not None:
             maskself = args.maskself.lower() == "true"
         return _run_scorecard(
+            suite=args.suite,
             datasets=args.datasets,
             task_types=args.task_types,
             plan_types=args.plan_types,

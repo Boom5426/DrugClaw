@@ -14,6 +14,7 @@ from .query_plan import (
     normalize_question_type,
     normalize_task_type,
     prioritize_target_lookup_skills,
+    uses_fallback_preferred_skills,
 )
 
 
@@ -212,21 +213,16 @@ Rules:
         elif raw_question_type_key != question_type:
             use_fallback_skills = True
 
-        strong_path_question_types = {
-            "drug_repurposing",
-            "mechanism",
-            "pharmacogenomics",
-        }
         preferred_skills = self._normalize_list(payload.get("preferred_skills"))
         if (
             use_fallback_skills
             or not preferred_skills
-            or question_type in strong_path_question_types
+            or uses_fallback_preferred_skills(question_type)
         ):
             preferred_skills = fallback.preferred_skills
 
         requires_graph_reasoning = bool(payload.get("requires_graph_reasoning", False))
-        if use_fallback_skills or question_type in strong_path_question_types:
+        if use_fallback_skills or uses_fallback_preferred_skills(question_type):
             requires_graph_reasoning = fallback.requires_graph_reasoning
 
         if fallback.plan_type == "composite_query":
@@ -397,6 +393,10 @@ Rules:
             question_type=candidate.question_type,
         ):
             preferred_skills = list(fallback.preferred_skills)
+        elif plan_type == "single_task" and uses_fallback_preferred_skills(candidate.question_type):
+            preferred_skills = list(fallback.preferred_skills)
+            if primary_task is not None and getattr(fallback, "primary_task", None) is not None:
+                primary_task["preferred_skills"] = list(fallback.primary_task.preferred_skills)
 
         return QueryPlan(
             question_type=str(candidate.question_type or fallback.question_type),

@@ -2126,6 +2126,12 @@ Formatting requirements:
         ).strip()
         action_phrase = self._mechanism_action_phrase(relationship)
         normalized_target = self._normalize_target_label(target_entity) or target_entity
+        mechanism_class = self._infer_mechanism_class_label(
+            relationship=relationship,
+            target_entity=target_entity,
+            snippet=snippet,
+            mechanism=mechanism,
+        )
 
         if self._is_mechanism_evidence_item(item):
             mechanism_text = mechanism
@@ -2141,12 +2147,34 @@ Formatting requirements:
                 mechanism_text = f"{action_phrase} {normalized_target}"
             if not mechanism_text:
                 mechanism_text = snippet or normalized_target
+            if mechanism_class and mechanism_class not in mechanism_text.lower():
+                if action_phrase and mechanism_text.lower().startswith(f"{action_phrase} "):
+                    mechanism_text = f"{mechanism_class} that {mechanism_text}"
+                else:
+                    mechanism_text = f"{mechanism_class}; {mechanism_text}"
             if mechanism_text:
                 return f"{source_entity} mechanism: {mechanism_text}"
         if self._is_target_evidence_item(item) and source_entity and target_entity:
             return f"{source_entity} targets {target_entity}."
         if "mechanism" in relationship and source_entity and target_entity:
             return f"{source_entity} mechanism involves {target_entity}"
+        return ""
+
+    @staticmethod
+    def _infer_mechanism_class_label(
+        *,
+        relationship: str,
+        target_entity: str,
+        snippet: str,
+        mechanism: str,
+    ) -> str:
+        text = " ".join(
+            part for part in (target_entity, snippet, mechanism) if str(part or "").strip()
+        ).lower()
+        if "inhib" not in relationship and "inhibitor" not in text:
+            return ""
+        if "tyrosine kinase" in text or "tyrosine-protein kinase" in text:
+            return "tyrosine kinase inhibitor"
         return ""
 
     def _has_independent_target_support(self, item: Any, evidence_items) -> bool:
@@ -2194,6 +2222,8 @@ Formatting requirements:
         clinpgx_level = str(item.structured_payload.get("clinpgxlevel") or "").strip()
         pgx_testing = str(item.structured_payload.get("pgxtesting") or "").strip()
         actionable = bool(item.structured_payload.get("usedforrecommendation"))
+        mechanism_summary = str(item.structured_payload.get("mechanism_summary") or "").strip()
+        guidance_summary = str(item.structured_payload.get("guidance_summary") or "").strip()
 
         if "guideline" in relationship:
             details: List[str] = []
@@ -2204,8 +2234,13 @@ Formatting requirements:
             if actionable or pgx_testing.lower().startswith("actionable"):
                 details.append("actionable guidance")
             suffix = f" ({'; '.join(details)})" if details else ""
+            if mechanism_summary or guidance_summary:
+                summary_parts = [part for part in (mechanism_summary, guidance_summary) if part]
+                return f"{source_entity} PGx guidance highlights {target_entity}{suffix}: {' '.join(summary_parts)}"
             return f"{source_entity} PGx guidance highlights {target_entity}{suffix}"
         if "pgx" in relationship or "association" in relationship:
+            if mechanism_summary:
+                return f"{source_entity} has a pharmacogenomic association with {target_entity}: {mechanism_summary}"
             return f"{source_entity} has a pharmacogenomic association with {target_entity}"
         return ""
 

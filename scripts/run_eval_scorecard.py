@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 from typing import Sequence
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from drugclaw.cli import _run_scorecard
 
@@ -11,6 +17,12 @@ from drugclaw.cli import _run_scorecard
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the unified DrugClaw self-bench scorecard and persist the latest snapshot.",
+    )
+    parser.add_argument(
+        "--suite",
+        choices=["self_bench", "cli_usability_min_pack"],
+        default="self_bench",
+        help="Scorecard suite to evaluate.",
     )
     parser.add_argument(
         "--datasets",
@@ -96,6 +108,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.maskself is not None:
         maskself = args.maskself == "true"
     return _run_scorecard(
+        suite=args.suite,
         datasets=list(args.datasets or []),
         task_types=list(args.task_types or []),
         plan_types=list(args.plan_types or []),

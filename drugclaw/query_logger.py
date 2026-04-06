@@ -15,12 +15,18 @@ Each query is stored in its own directory:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pickle
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - only relevant on non-POSIX platforms
+    fcntl = None
 
 from .response_formatter import (
     format_reasoning_trace,
@@ -49,15 +55,119 @@ class QueryLogger:
 
     def _load_or_create_index(self):
         if self.index_file.exists():
-            with open(self.index_file, "r") as f:
-                self.index = json.load(f)
+            self.index = self._read_index_from_disk()
         else:
             self.index = {"total_queries": 0, "queries": []}
             self._save_index()
+        self._sync_index_from_logs()
 
     def _save_index(self):
-        with open(self.index_file, "w") as f:
-            json.dump(self.index, indent=2, fp=f)
+        self._write_index_to_disk(self.index)
+
+    def _read_index_from_disk(self) -> Dict[str, Any]:
+        if not self.index_file.exists():
+            return {"total_queries": 0, "queries": []}
+        with open(self.index_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return self._normalize_index(payload)
+
+    @staticmethod
+    def _normalize_index(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+        raw_queries = list((payload or {}).get("queries", []) or [])
+        normalized_queries: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for entry in raw_queries:
+            query_id = str((entry or {}).get("query_id", "") or "").strip()
+            if not query_id or query_id in seen:
+                continue
+            seen.add(query_id)
+            normalized_queries.append(dict(entry or {}))
+        return {
+            "total_queries": len(normalized_queries),
+            "queries": normalized_queries,
+        }
+
+    @contextlib.contextmanager
+    def _locked_index_handle(self, mode: str):
+        with open(self.index_file, mode, encoding="utf-8") as f:
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                yield f
+            finally:
+                f.flush()
+                os.fsync(f.fileno())
+                if fcntl is not None:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+    def _write_index_to_disk(self, payload: Dict[str, Any]) -> None:
+        normalized = self._normalize_index(payload)
+        with self._locked_index_handle("a+") as f:
+            f.seek(0)
+            f.truncate()
+            json.dump(normalized, indent=2, fp=f, ensure_ascii=False)
+        self.index = normalized
+
+    def _append_index_entry(self, entry: Dict[str, Any]) -> None:
+        self.index_file.parent.mkdir(parents=True, exist_ok=True)
+        if not self.index_file.exists():
+            self.index_file.write_text(
+                json.dumps({"total_queries": 0, "queries": []}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        with self._locked_index_handle("r+") as f:
+            try:
+                current = json.load(f)
+            except json.JSONDecodeError:
+                current = {"total_queries": 0, "queries": []}
+            normalized = self._normalize_index(current)
+            known_ids = {
+                str(item.get("query_id", "") or "").strip()
+                for item in normalized.get("queries", [])
+            }
+            query_id = str(entry.get("query_id", "") or "").strip()
+            if query_id and query_id not in known_ids:
+                normalized["queries"].append(dict(entry))
+            normalized["total_queries"] = len(normalized["queries"])
+            f.seek(0)
+            f.truncate()
+            json.dump(normalized, indent=2, fp=f, ensure_ascii=False)
+        self.index = normalized
+
+    def _sync_index_from_logs(self) -> None:
+        entries_by_id = {
+            str(entry.get("query_id", "") or "").strip(): dict(entry)
+            for entry in self.index.get("queries", [])
+            if str(entry.get("query_id", "") or "").strip()
+        }
+        changed = False
+        for meta_file in sorted(self.log_dir.glob("query_*/metadata.json")):
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            query_id = str(meta.get("query_id", "") or "").strip()
+            if not query_id or query_id in entries_by_id:
+                continue
+            entries_by_id[query_id] = {
+                "query_id": query_id,
+                "timestamp": str(meta.get("timestamp", "") or ""),
+                "query": str(meta.get("query", "") or "")[:100],
+                "success": bool(meta.get("success", False)),
+                "iterations": int(meta.get("iterations", 0) or 0),
+                "mode": str(meta.get("mode", "") or ""),
+            }
+            changed = True
+        if not changed:
+            self.index = self._normalize_index(self.index)
+            return
+        merged_queries = sorted(
+            entries_by_id.values(),
+            key=lambda entry: str(entry.get("timestamp", "") or ""),
+        )
+        self._write_index_to_disk(
+            {
+                "total_queries": len(merged_queries),
+                "queries": merged_queries,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Core logging
@@ -115,6 +225,11 @@ class QueryLogger:
             ],
             "user_metadata": metadata or {},
         }
+        runtime_metadata = self._extract_runtime_metadata(metadata or {})
+        if runtime_metadata:
+            meta["runtime_metadata"] = runtime_metadata
+            if runtime_metadata.get("suite_name"):
+                meta["suite_name"] = runtime_metadata["suite_name"]
         latest_scorecard = self.get_latest_scorecard_summary()
         if latest_scorecard:
             meta["recent_scorecard"] = latest_scorecard
@@ -183,8 +298,7 @@ class QueryLogger:
             )
 
         # ── Update global index ─────────────────────────────────────
-        self.index["total_queries"] += 1
-        self.index["queries"].append(
+        self._append_index_entry(
             {
                 "query_id": query_id,
                 "timestamp": timestamp.isoformat(),
@@ -194,10 +308,25 @@ class QueryLogger:
                 "mode": result.get("mode", ""),
             }
         )
-        self._save_index()
 
         print(f"[QueryLogger] Logged query: {query_id}  →  {query_dir}")
         return query_id
+
+    @staticmethod
+    def _extract_runtime_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+        runtime_keys = (
+            "git_sha",
+            "model",
+            "base_url",
+            "doctor_summary",
+            "network_notes",
+            "suite_name",
+        )
+        return {
+            key: metadata[key]
+            for key in runtime_keys
+            if str(metadata.get(key, "") or "").strip()
+        }
 
     def save_scorecard_summary(
         self,

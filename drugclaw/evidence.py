@@ -282,6 +282,12 @@ def _pgx_claim_from_record(record: Dict[str, Any]) -> str:
     clinpgx_level = str(metadata.get("clinpgxlevel") or record.get("clinpgxlevel") or "").strip()
     pgx_testing = str(metadata.get("pgxtesting") or record.get("pgxtesting") or "").strip()
     actionable = bool(metadata.get("usedforrecommendation") or record.get("usedforrecommendation"))
+    mechanism_summary = str(
+        metadata.get("mechanism_summary") or record.get("mechanism_summary") or ""
+    ).strip()
+    guidance_summary = str(
+        metadata.get("guidance_summary") or record.get("guidance_summary") or ""
+    ).strip()
 
     if "guideline" in relationship:
         details: List[str] = []
@@ -292,9 +298,14 @@ def _pgx_claim_from_record(record: Dict[str, Any]) -> str:
         if actionable or pgx_testing.lower().startswith("actionable"):
             details.append("actionable guidance")
         suffix = f" ({'; '.join(details)})" if details else ""
+        if mechanism_summary or guidance_summary:
+            summary_parts = [part for part in (mechanism_summary, guidance_summary) if part]
+            return f"{source_entity} PGx guidance highlights {target_entity}{suffix}: {' '.join(summary_parts)}"
         return f"{source_entity} PGx guidance highlights {target_entity}{suffix}"
 
     if "pgx" in relationship or "association" in relationship:
+        if mechanism_summary:
+            return f"{source_entity} has a pharmacogenomic association with {target_entity}: {mechanism_summary}"
         return f"{source_entity} has a pharmacogenomic association with {target_entity}"
     return ""
 

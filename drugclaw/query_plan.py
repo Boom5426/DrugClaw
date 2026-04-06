@@ -99,6 +99,13 @@ HIGH_RISK_TASK_TYPES = {
     "pgx_guidance",
 }
 
+STRONG_PATH_QUESTION_TYPES = {
+    "drug_repurposing",
+    "mechanism",
+    "pharmacogenomics",
+    "labeling",
+}
+
 
 def _normalize_token(value: str) -> str:
     return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
@@ -234,6 +241,10 @@ def normalize_question_type(value: str) -> str:
 
 def is_supported_question_type(value: str) -> bool:
     return normalize_question_type(value) in SUPPORTED_QUESTION_TYPES
+
+
+def uses_fallback_preferred_skills(question_type: str) -> bool:
+    return normalize_question_type(question_type) in STRONG_PATH_QUESTION_TYPES
 
 
 def _merge_entities_from_tasks(tasks: Sequence["AnswerTask"]) -> Dict[str, List[str]]:

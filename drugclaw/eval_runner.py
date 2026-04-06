@@ -4,8 +4,10 @@ import importlib
 import time
 from typing import Any, Callable, Dict, Iterable, List, Sequence
 
+from .cli_usability_cases import build_cli_usability_min_pack
 from .evidence import EvidenceItem
 from .eval_models import EvalExpectation, EvalRunSummary, EvalScore, EvalTaskCase
+from .query_logger import QueryLogger
 from .query_plan import normalize_task_type
 from .task_evidence_policy import classify_evidence_item
 from self_bench.bench_utils import DATASET_SKILL_MAP
@@ -142,7 +144,7 @@ def run_eval_cases(
         authority_source_values.append(_coerce_metric(raw_result, "authority_source_rate"))
         knowhow_hit_values.append(_coerce_metric(raw_result, "knowhow_hit_rate"))
         package_ready_values.append(_coerce_metric(raw_result, "package_ready_rate"))
-        if score.error:
+        if score.error or not score.passed:
             failed_cases += 1
         else:
             completed_cases += 1
@@ -194,6 +196,59 @@ def run_self_bench(
     )
 
 
+def run_cli_usability_min_pack(
+    *,
+    log_dir: str = "./query_logs",
+) -> EvalRunSummary:
+    logger = QueryLogger(log_dir)
+    cases = build_cli_usability_min_pack()
+    raw_results_by_case: Dict[str, Dict[str, Any]] = {}
+
+    for case in cases:
+        matched_logs = sorted(
+            [
+                metadata
+                for metadata in logger.search_queries()
+                if str(metadata.get("query", "") or "").strip() == case.query
+            ],
+            key=lambda metadata: str(metadata.get("timestamp", "") or ""),
+        )
+        if not matched_logs:
+            raw_results_by_case[case.dataset_name] = {
+                "error": f"missing query log for {case.task_id}",
+            }
+            continue
+
+        latest = matched_logs[-1]
+        detailed = logger.get_query(str(latest.get("query_id", "") or ""), detailed=True) or {}
+        full_result = dict(detailed.get("full_result") or {})
+        full_result["log_metadata"] = dict(latest)
+        full_result["matched_query_ids"] = [
+            str(metadata.get("query_id", "") or "")
+            for metadata in matched_logs
+            if str(metadata.get("query_id", "") or "").strip()
+        ]
+        full_result["matched_queries_count"] = len(matched_logs)
+        raw_results_by_case[case.dataset_name] = full_result
+
+    def _dataset_runner(
+        dataset: str,
+        key_file: str | None,
+        max_samples: int,
+        maskself: bool | None,
+        runner_log_dir: str | None,
+    ) -> Dict[str, Any]:
+        del key_file, max_samples, maskself, runner_log_dir
+        return dict(raw_results_by_case.get(dataset, {"error": f"missing raw result for {dataset}"}))
+
+    return run_eval_cases(
+        cases,
+        dataset_runner=_dataset_runner,
+        datasets=[case.dataset_name for case in cases],
+        log_dir=log_dir,
+    )
+
+
 def _filter_cases(
     task_cases: List[EvalTaskCase],
     *,
@@ -228,6 +283,7 @@ def _score_case(case: EvalTaskCase, raw_result: Dict[str, Any]) -> EvalScore:
         "evidence_coverage",
         "source_quality",
         "conflict_handling",
+        "cli_usability_contract",
     }:
         raise ValueError(f"unsupported scorer: {scorer}")
 
@@ -248,6 +304,7 @@ def _score_case(case: EvalTaskCase, raw_result: Dict[str, Any]) -> EvalScore:
 
     metrics = dict(raw_result)
     score = float(raw_result.get("accuracy", 0.0) or 0.0)
+    passed = True
     if scorer == "evidence_coverage":
         score, derived_metrics = _score_evidence_coverage(case, raw_result)
         metrics.update(derived_metrics)
@@ -256,6 +313,9 @@ def _score_case(case: EvalTaskCase, raw_result: Dict[str, Any]) -> EvalScore:
         metrics.update(derived_metrics)
     elif scorer == "conflict_handling":
         score, derived_metrics = _score_conflict_handling(raw_result)
+        metrics.update(derived_metrics)
+    elif scorer == "cli_usability_contract":
+        score, derived_metrics, passed = _score_cli_usability_contract(case, raw_result)
         metrics.update(derived_metrics)
     elif scorer != "classification_exact":
         score = float(raw_result.get(scorer, score) or 0.0)
@@ -268,7 +328,7 @@ def _score_case(case: EvalTaskCase, raw_result: Dict[str, Any]) -> EvalScore:
         legacy_question_type=case.legacy_question_type,
         scorer=scorer,
         score=score,
-        passed=True,
+        passed=passed,
         metrics=metrics,
         error="",
     )
@@ -362,6 +422,49 @@ def _score_conflict_handling(raw_result: Dict[str, Any]) -> tuple[float, Dict[st
         derived_metrics["conflict_resolution_quality"] = quality
         components.append(quality)
     return _average(components), derived_metrics
+
+
+def _score_cli_usability_contract(
+    case: EvalTaskCase,
+    raw_result: Dict[str, Any],
+) -> tuple[float, Dict[str, float], bool]:
+    searchable_text = _build_searchable_text(raw_result)
+    answer_layer_text = _build_answer_layer_text(raw_result)
+    must_hit_patterns = getattr(case.expectation, "must_hit_patterns", []) or []
+    hard_fail_patterns = getattr(case.expectation, "hard_fail_patterns", []) or []
+    required_metadata_keys = getattr(case.expectation, "required_metadata_keys", []) or []
+    rerun_policy = str(getattr(case.expectation, "rerun_policy", "on_demand") or "on_demand")
+
+    must_hit_coverage = _average(
+        [1.0 if _text_matches_any(searchable_text, group) else 0.0 for group in must_hit_patterns]
+    ) if must_hit_patterns else 0.0
+    false_positive_detected = 1.0 if _text_matches_any(answer_layer_text, hard_fail_patterns) else 0.0
+
+    runtime_metadata = _extract_runtime_metadata(raw_result)
+    metadata_complete = _average(
+        [1.0 if str(runtime_metadata.get(key, "") or "").strip() else 0.0 for key in required_metadata_keys]
+    ) if required_metadata_keys else 1.0
+
+    matched_queries_count = int(raw_result.get("matched_queries_count", 0) or 0)
+    rerun_consistency = 1.0
+    if rerun_policy == "fixed" and matched_queries_count >= 2:
+        rerun_consistency = 1.0
+
+    success = bool(raw_result.get("success", False))
+    passed = (
+        success
+        and false_positive_detected == 0.0
+        and must_hit_coverage >= 1.0
+        and metadata_complete >= 1.0
+    )
+    metrics = {
+        "must_hit_coverage": must_hit_coverage,
+        "false_positive_detected": false_positive_detected,
+        "metadata_complete": metadata_complete,
+        "rerun_consistency": rerun_consistency,
+        "matched_queries_count": float(matched_queries_count),
+    }
+    return _average([must_hit_coverage, metadata_complete, rerun_consistency]), metrics, passed
 
 
 def _derive_evidence_tier_quality(task_type: str, raw_result: Dict[str, Any]) -> float | None:
@@ -579,6 +682,63 @@ def _average(values: Sequence[float]) -> float:
     return round(sum(values) / len(values), 4)
 
 
+def _build_searchable_text(raw_result: Dict[str, Any]) -> str:
+    parts = _string_list(
+        raw_result.get("answer"),
+        raw_result.get("formatted_answer"),
+        raw_result.get("retrieved_text"),
+        raw_result.get("reflection_feedback"),
+    )
+    structured = _coerce_mapping(raw_result.get("final_answer_structured"))
+    parts.extend(
+        _string_list(
+            structured.get("final_outcome"),
+            structured.get("warnings"),
+            structured.get("limitations"),
+            [item.get("claim", "") for item in _coerce_sequence(structured.get("key_claims")) if isinstance(item, dict)],
+        )
+    )
+    for item in _extract_evidence_items(raw_result):
+        parts.extend(
+            _string_list(
+                item.get("claim"),
+                item.get("snippet"),
+                item.get("source_skill"),
+                item.get("source_locator"),
+            )
+        )
+    return "\n".join(parts).lower()
+
+
+def _build_answer_layer_text(raw_result: Dict[str, Any]) -> str:
+    parts = _string_list(
+        raw_result.get("answer"),
+    )
+    structured = _coerce_mapping(raw_result.get("final_answer_structured"))
+    parts.extend(
+        _string_list(
+            structured.get("final_outcome"),
+            structured.get("warnings"),
+            structured.get("limitations"),
+            [item.get("claim", "") for item in _coerce_sequence(structured.get("key_claims")) if isinstance(item, dict)],
+        )
+    )
+    return "\n".join(parts).lower()
+
+
+def _text_matches_any(text: str, patterns: Sequence[str]) -> bool:
+    haystack = str(text or "").lower()
+    return any(str(pattern or "").strip().lower() in haystack for pattern in patterns if str(pattern or "").strip())
+
+
+def _extract_runtime_metadata(raw_result: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = _coerce_mapping(raw_result.get("log_metadata"))
+    runtime_metadata = _coerce_mapping(metadata.get("runtime_metadata"))
+    if runtime_metadata:
+        return runtime_metadata
+    return _coerce_mapping(metadata.get("user_metadata"))
+
+
 def _build_breakdown(scores: Sequence[EvalScore], *, group_key: str) -> Dict[str, Dict[str, Any]]:
     buckets: Dict[str, List[EvalScore]] = {}
     for score in scores:
@@ -590,7 +750,7 @@ def _build_breakdown(scores: Sequence[EvalScore], *, group_key: str) -> Dict[str
     breakdown: Dict[str, Dict[str, Any]] = {}
     for value, grouped_scores in buckets.items():
         total_cases = len(grouped_scores)
-        completed_cases = sum(1 for score in grouped_scores if not score.error)
+        completed_cases = sum(1 for score in grouped_scores if score.passed and not score.error)
         failed_cases = total_cases - completed_cases
         breakdown[value] = {
             "total_cases": total_cases,
