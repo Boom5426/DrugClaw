@@ -659,6 +659,209 @@ def test_planner_enforces_phase_2a_pgx_bundle_for_canonical_question_type() -> N
     assert plan.requires_graph_reasoning is False
 
 
+def test_planner_builds_composite_adr_and_labeling_plan_for_major_safety_queries() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "question_type": "drug_safety_adverse_reactions",
+                "entities": {"drug": ["clozapine"]},
+                "subquestions": [
+                    "What are the major safety risks and serious adverse reactions of clozapine?"
+                ],
+                "preferred_skills": ["ADReCS", "FAERS", "nSIDES", "SIDER"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": True,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "high",
+                "notes": ["Prefer ADR resources."],
+            }
+        )
+    ).plan("What are the major safety risks and serious adverse reactions of clozapine?")
+
+    assert plan.plan_type == "composite_query"
+    assert plan.question_type == "adr"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "major_adrs"
+    assert [task.task_type for task in plan.supporting_tasks] == ["labeling_summary"]
+    assert "openFDA Human Drug" in plan.supporting_tasks[0].preferred_skills
+
+
+def test_planner_prunes_irrelevant_ddi_support_from_pgx_queries() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "question_type": "pharmacogenomics",
+                "entities": {"drug": ["clopidogrel"]},
+                "subquestions": ["What pharmacogenomic factors affect clopidogrel efficacy and safety?"],
+                "preferred_skills": ["PharmGKB", "CPIC", "KEGG Drug"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "high",
+                "notes": ["Planner attached an unnecessary DDI support task."],
+                "plan_type": "composite_query",
+                "primary_task": {"task_type": "pgx_guidance"},
+                "supporting_tasks": [{"task_type": "clinically_relevant_ddi"}],
+            }
+        )
+    ).plan("What pharmacogenomic factors affect clopidogrel efficacy and safety?")
+
+    assert plan.plan_type == "single_task"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "pgx_guidance"
+    assert plan.supporting_tasks == []
+
+
+def test_planner_prunes_irrelevant_mechanism_support_from_ddi_queries() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "question_type": "ddi_mechanism",
+                "entities": {"drug": ["warfarin"]},
+                "subquestions": ["What are the clinically important drug-drug interactions of warfarin and their mechanisms?"],
+                "preferred_skills": ["DDInter", "KEGG Drug", "Open Targets Platform"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "high",
+                "notes": ["Planner attached a target-MOA support task that does not answer the DDI question."],
+                "plan_type": "composite_query",
+                "primary_task": {"task_type": "ddi_mechanism"},
+                "supporting_tasks": [
+                    {"task_type": "clinically_relevant_ddi"},
+                    {"task_type": "mechanism_of_action"},
+                ],
+            }
+        )
+    ).plan("What are the clinically important drug-drug interactions of warfarin and their mechanisms?")
+
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "ddi_mechanism"
+    assert [task.task_type for task in plan.supporting_tasks] == ["clinically_relevant_ddi"]
+
+
+def test_planner_backfills_fallback_labeling_support_for_serious_adr_v2_plans() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "question_type": "adr",
+                "entities": {"drug": ["clozapine"]},
+                "subquestions": [
+                    "What are the major safety risks and serious adverse reactions of clozapine?"
+                ],
+                "preferred_skills": ["openFDA Human Drug", "FAERS"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "high",
+                "notes": ["Planner emitted single-task v2 ADR plan."],
+                "plan_type": "single_task",
+                "primary_task": {
+                    "task_type": "major_adrs",
+                    "preferred_skills": ["openFDA Human Drug", "FAERS"],
+                },
+                "supporting_tasks": [],
+            }
+        )
+    ).plan("What are the major safety risks and serious adverse reactions of clozapine?")
+
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "major_adrs"
+    assert [task.task_type for task in plan.supporting_tasks] == ["labeling_summary"]
+
+
+def test_planner_drops_irrelevant_ddi_support_for_pgx_queries() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "question_type": "pharmacogenomics",
+                "entities": {"drug": ["clopidogrel"]},
+                "subquestions": ["What pharmacogenomic factors affect clopidogrel efficacy and safety?"],
+                "preferred_skills": ["PharmGKB", "CPIC", "KEGG Drug"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "high",
+                "notes": ["Planner over-expanded the query."],
+                "plan_type": "composite_query",
+                "primary_task": {"task_type": "pgx_guidance"},
+                "supporting_tasks": [{"task_type": "clinically_relevant_ddi"}],
+            }
+        )
+    ).plan("What pharmacogenomic factors affect clopidogrel efficacy and safety?")
+
+    assert plan.plan_type == "single_task"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "pgx_guidance"
+    assert plan.supporting_tasks == []
+
+
+def test_planner_drops_unrelated_mechanism_support_for_ddi_queries() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "question_type": "ddi_mechanism",
+                "entities": {"drug": ["warfarin"]},
+                "subquestions": [
+                    "What are the clinically important drug-drug interactions of warfarin and their mechanisms?"
+                ],
+                "preferred_skills": ["DDInter", "KEGG Drug", "Open Targets Platform"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "high",
+                "notes": ["Planner added a generic mechanism task."],
+                "plan_type": "composite_query",
+                "primary_task": {"task_type": "ddi_mechanism"},
+                "supporting_tasks": [
+                    {"task_type": "clinically_relevant_ddi"},
+                    {"task_type": "mechanism_of_action"},
+                ],
+            }
+        )
+    ).plan("What are the clinically important drug-drug interactions of warfarin and their mechanisms?")
+
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "ddi_mechanism"
+    assert [task.task_type for task in plan.supporting_tasks] == ["clinically_relevant_ddi"]
+
+
+def test_planner_preserves_labeling_support_for_repurposing_queries_with_approved_indications() -> None:
+    plan = PlannerAgent(
+        _LLMStub(
+            {
+                "question_type": "drug_repurposing",
+                "entities": {"drug": ["metformin"]},
+                "subquestions": ["What are the approved indications and repurposing evidence of metformin?"],
+                "preferred_skills": ["DrugRepoBank", "RepurposeDrugs", "openFDA Human Drug"],
+                "preferred_evidence_types": ["database_record"],
+                "requires_graph_reasoning": False,
+                "requires_prediction_sources": False,
+                "requires_web_fallback": False,
+                "answer_risk_level": "high",
+                "notes": ["Planner kept useful label support for approved indications."],
+                "plan_type": "composite_query",
+                "primary_task": {"task_type": "repurposing_evidence"},
+                "supporting_tasks": [{"task_type": "labeling_summary"}],
+            }
+        )
+    ).plan("What are the approved indications and repurposing evidence of metformin?")
+
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "repurposing_evidence"
+    assert [task.task_type for task in plan.supporting_tasks] == ["labeling_summary"]
+
+
 def test_planner_normalizes_real_world_noncanonical_question_types_to_supported_fallbacks() -> None:
     cases = [
         (

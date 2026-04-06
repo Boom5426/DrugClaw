@@ -56,6 +56,55 @@ def test_policy_classifies_repodb_repurposing_rows_as_strong_structured() -> Non
     assert classification.slot == "repurposing_evidence"
 
 
+def test_policy_classifies_drugrepobank_rows_as_strong_structured_repurposing_evidence() -> None:
+    item = _make_item(
+        source_skill="DrugRepoBank",
+        relationship="repurposed_for",
+        target_entity="polycystic ovary syndrome",
+        target_type="disease",
+        structured_payload={
+            "status": "Clinical trial",
+            "pmid": "23456789",
+        },
+    )
+
+    classification = classify_evidence_item("drug_repurposing", item)
+
+    assert classification.tier == "strong_structured"
+    assert classification.slot == "repurposing_evidence"
+
+
+def test_policy_keeps_exploratory_repurposing_sources_in_repurposing_section_without_upgrading_them() -> None:
+    oregano_item = _make_item(
+        source_skill="OREGANO",
+        relationship="clinical_signal",
+        target_entity="ovarian cancer",
+        target_type="disease",
+        structured_payload={
+            "type": "clinical_signal",
+            "evidence": "observational evidence",
+        },
+    )
+    repurpose_item = _make_item(
+        source_skill="RepurposeDrugs",
+        relationship="repurposed_for",
+        target_entity="ovarian cancer",
+        target_type="disease",
+        structured_payload={
+            "status": "Investigational",
+            "score": "0.81",
+        },
+    )
+
+    oregano_classification = classify_evidence_item("drug_repurposing", oregano_item)
+    repurpose_classification = classify_evidence_item("drug_repurposing", repurpose_item)
+
+    assert oregano_classification.tier == "generic_weak_support"
+    assert oregano_classification.slot == "repurposing_evidence"
+    assert repurpose_classification.tier == "generic_weak_support"
+    assert repurpose_classification.slot == "repurposing_evidence"
+
+
 def test_policy_classifies_drugbank_indications_as_strong_structured() -> None:
     item = _make_item(
         source_skill="DrugBank",

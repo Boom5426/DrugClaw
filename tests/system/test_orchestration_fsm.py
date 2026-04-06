@@ -663,6 +663,40 @@ def test_retriever_resource_filter_prefers_resolved_alias_entities() -> None:
     assert coder.last_entities == {"drug": ["imatinib"]}
 
 
+def test_retriever_resource_filter_prefers_resolved_glucophage_alias_entities_for_labeling_query() -> None:
+    class _EntityExtractionFailLLM:
+        def generate_json(self, messages, temperature=0.3):
+            raise ValueError("entity extraction unavailable")
+
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What prescribing and safety information is available for Glucophage?",
+        normalized_query="What prescribing and safety information is available for metformin?",
+        resolved_entities={"drug": ["metformin"]},
+        input_resolution={
+            "status": "resolved",
+            "canonical_drug_names": ["metformin"],
+        },
+        thinking_mode="simple",
+        resource_filter=["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"],
+    )
+
+    retriever = RetrieverAgent(
+        _EntityExtractionFailLLM(),
+        _SelectiveRegistryStub(["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"]),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.query_plan is not None
+    assert updated.query_plan.question_type == "labeling"
+    assert updated.query_plan.entities == {"drug": ["metformin"]}
+    assert updated.current_query_entities == {"drug": ["metformin"]}
+    assert coder.last_entities == {"drug": ["metformin"]}
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
 def test_retriever_resource_filter_preserves_composite_query_plan_shape() -> None:
     retriever = RetrieverAgent(
         _PlannerBypassLLMStub(),
@@ -991,6 +1025,349 @@ def test_retriever_prefers_deterministic_only_for_simple_drug_repurposing_query(
     assert coder.last_skill_names == ["RepoDB", "DrugCentral", "DrugBank"]
 
 
+def test_retriever_prefers_local_repurposing_fallback_before_official_label_sources() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the approved indications and repurposing evidence of metformin?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_repurposing",
+            entities={"drug": ["metformin"]},
+            subquestions=["What are the approved indications and repurposing evidence of metformin?"],
+            preferred_skills=[
+                "RepoDB",
+                "DrugCentral",
+                "DrugBank",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct indication and repurposing evidence sources."],
+        ),
+    )
+
+    class _RepurposingSkillStub(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RepurposingRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "RepoDB": _RepurposingSkillStub(False, "DATASET"),
+                "DrugCentral": _RepurposingSkillStub(False, "REST_API"),
+                "DrugBank": _RepurposingSkillStub(False, "REST_API"),
+                "DrugRepoBank": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "RepurposeDrugs": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "OREGANO": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "openFDA Human Drug": _RepurposingSkillStub(True, "REST_API"),
+                "DailyMed": _RepurposingSkillStub(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return ["DrugRepoBank", "RepurposeDrugs", "OREGANO", "DailyMed", "openFDA Human Drug"]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RepurposingRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == [
+        "DrugRepoBank",
+        "RepurposeDrugs",
+        "OREGANO",
+        "openFDA Human Drug",
+    ]
+
+
+def test_retriever_normalizes_structured_drug_entity_dicts_to_names_for_coder() -> None:
+    normalized = RetrieverAgent._normalize_entities_for_coder(
+        {
+            "drug": [
+                {"name": "warfarin", "type": "small_molecule_drug"},
+                "Coumadin",
+            ]
+        }
+    )
+
+    assert normalized == {"drug": ["warfarin", "Coumadin"]}
+
+
+def test_retriever_supplements_composite_adr_queries_with_official_labeling_skill() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the major safety risks and serious adverse reactions of clozapine?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="adr",
+            entities={"drug": ["clozapine"]},
+            subquestions=["What are the major safety risks and serious adverse reactions of clozapine?"],
+            preferred_skills=[
+                "ADReCS",
+                "FAERS",
+                "nSIDES",
+                "SIDER",
+                "DailyMed",
+                "openFDA Human Drug",
+                "MedlinePlus Drug Info",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="high",
+            notes=["Pair serious ADR evidence with official labeling support."],
+            plan_type="composite_query",
+            primary_task={"task_type": "major_adrs"},
+            supporting_tasks=[{"task_type": "labeling_summary"}],
+        ),
+    )
+
+    class _AdrRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "ADReCS": _AvailabilitySkillStub(True),
+                "FAERS": _AvailabilitySkillStub(True),
+                "nSIDES": _AvailabilitySkillStub(True),
+                "SIDER": _AvailabilitySkillStub(True),
+                "openFDA Human Drug": _AvailabilitySkillStub(True),
+                "DailyMed": _AvailabilitySkillStub(True),
+                "MedlinePlus Drug Info": _AvailabilitySkillStub(True),
+            }
+
+        def get_skills_for_query(self, query):
+            return [
+                "ADReCS",
+                "FAERS",
+                "nSIDES",
+                "SIDER",
+                "DailyMed",
+                "openFDA Human Drug",
+            ]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _AdrRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert "openFDA Human Drug" in coder.last_skill_names
+
+
+def test_retriever_infers_query_entities_when_planner_entities_are_missing() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the clinically important drug-drug interactions of warfarin and their mechanisms?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="ddi_mechanism",
+            entities={},
+            subquestions=["What are the clinically important drug-drug interactions of warfarin and their mechanisms?"],
+            preferred_skills=["DDInter", "KEGG Drug"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="high",
+            notes=["Planner failed to return entities."],
+            plan_type="composite_query",
+            primary_task={"task_type": "ddi_mechanism"},
+            supporting_tasks=[{"task_type": "clinically_relevant_ddi"}],
+        ),
+    )
+
+    class _DdiRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "DDInter": _AvailabilitySkillStub(True),
+                "KEGG Drug": _AvailabilitySkillStub(True),
+            }
+
+        def get_skills_for_query(self, query):
+            return ["DDInter", "KEGG Drug"]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _DdiRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_entities == {"drug": ["warfarin"]}
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_supplements_primary_repurposing_with_official_indication_support_when_needed() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the approved indications and repurposing evidence of metformin?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_repurposing",
+            entities={"drug": ["metformin"]},
+            subquestions=["What are the approved indications and repurposing evidence of metformin?"],
+            preferred_skills=[
+                "RepoDB",
+                "DrugCentral",
+                "DrugBank",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Keep both repurposing and approved-indication coverage when availability is mixed."],
+        ),
+    )
+
+    class _RepurposingSkillStub(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RepurposingRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "RepoDB": _RepurposingSkillStub(True, "DATASET"),
+                "DrugCentral": _RepurposingSkillStub(False, "REST_API"),
+                "DrugBank": _RepurposingSkillStub(False, "REST_API"),
+                "DrugRepoBank": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "RepurposeDrugs": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "OREGANO": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "openFDA Human Drug": _RepurposingSkillStub(True, "REST_API"),
+                "DailyMed": _RepurposingSkillStub(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return [
+                "RepoDB",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RepurposingRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == ["RepoDB", "openFDA Human Drug"]
+
+
+def test_retriever_supplements_primary_indication_sources_with_local_repurposing_fallback_when_needed() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the approved indications and repurposing evidence of metformin?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_repurposing",
+            entities={"drug": ["metformin"]},
+            subquestions=["What are the approved indications and repurposing evidence of metformin?"],
+            preferred_skills=[
+                "RepoDB",
+                "DrugCentral",
+                "DrugBank",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Keep both repurposing and approved-indication coverage when availability is mixed."],
+        ),
+    )
+
+    class _RepurposingSkillStub(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RepurposingRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "RepoDB": _RepurposingSkillStub(False, "DATASET"),
+                "DrugCentral": _RepurposingSkillStub(True, "REST_API"),
+                "DrugBank": _RepurposingSkillStub(False, "REST_API"),
+                "DrugRepoBank": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "RepurposeDrugs": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "OREGANO": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "openFDA Human Drug": _RepurposingSkillStub(True, "REST_API"),
+                "DailyMed": _RepurposingSkillStub(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return [
+                "DrugCentral",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RepurposingRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == [
+        "DrugCentral",
+        "DrugRepoBank",
+        "RepurposeDrugs",
+        "OREGANO",
+    ]
+
+
 def test_retriever_prefers_deterministic_only_for_simple_mechanism_query() -> None:
     coder = _CoderStub()
     state = AgentState(
@@ -1182,7 +1559,7 @@ def test_retriever_uses_available_repurposing_fallback_skills_when_primary_ones_
     assert "openFDA Human Drug" in updated.retrieved_text
     assert "Open Targets Platform" not in updated.retrieved_text
     assert "DRUGMECHDB" not in updated.retrieved_text
-    assert coder.last_skill_names == ["DailyMed", "openFDA Human Drug"]
+    assert coder.last_skill_names == ["openFDA Human Drug", "DailyMed"]
 
 
 class _NoOpAgent:

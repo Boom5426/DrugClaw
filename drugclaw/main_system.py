@@ -370,6 +370,9 @@ class DrugClawSystem:
                 state.original_query,
                 state.evidence_items,
                 web_search_results=getattr(state, "web_search_results", []),
+                normalized_query=getattr(state, "normalized_query", ""),
+                resolved_entities=getattr(state, "resolved_entities", {}) or {},
+                query_plan=getattr(state, "query_plan", None),
             )
         return state
 

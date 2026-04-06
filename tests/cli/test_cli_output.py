@@ -236,6 +236,42 @@ def test_run_query_can_print_saved_md_report_path(monkeypatch, capsys) -> None:
     assert "Markdown report saved to query_logs/query_1/report.md" in captured.out
 
 
+def test_run_query_omits_front_loaded_query_banner_by_default(monkeypatch, capsys) -> None:
+    class FakeSystem:
+        def __init__(self, config):
+            self.config = config
+
+        def query(
+            self,
+            query,
+            thinking_mode,
+            resource_filter,
+            verbose=True,
+            save_md_report=False,
+        ):
+            assert verbose is False
+            return {
+                "answer": "answer-once",
+                "formatted_answer": "# DrugClaw Query Report\n\n## Answer\n\nanswer-once",
+                "success": True,
+            }
+
+    monkeypatch.setattr(cli, "_build_system", lambda key_file: FakeSystem(object()))
+
+    exit_code = cli._run_query(
+        query="What are the known drug targets and mechanism of action of imatinib?",
+        thinking_mode="simple",
+        key_file="navigator_api_keys.json",
+        resource_filter=None,
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "FINAL ANSWER" in captured.out
+    assert "QUERY [simple]" not in captured.out
+
+
 def test_run_parser_accepts_save_md_report_flag() -> None:
     parser = cli.build_parser()
 

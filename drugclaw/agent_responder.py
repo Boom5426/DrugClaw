@@ -15,11 +15,13 @@ from .query_plan import (
     infer_entities_from_query,
     infer_question_type_from_query,
     is_direct_target_lookup,
+    legacy_question_type_for_task_type,
     normalize_question_type,
     normalize_task_type,
 )
 from .task_evidence_policy import classify_evidence_item
 from .web_evidence import build_task_aware_web_section, build_web_citations, summarize_web_results
+from .web_query_policy import normalize_result_domain
 
 class ResponderAgent:
     """
@@ -398,9 +400,12 @@ Formatting requirements:
             claim_assessments=state.claim_assessments,
             query_plan=getattr(state, "query_plan", None),
             web_search_results=getattr(state, "web_search_results", []),
+            normalized_query=getattr(state, "normalized_query", ""),
+            resolved_entities=getattr(state, "resolved_entities", {}) or {},
         )
         state.final_answer_structured = final_answer
         state.current_answer = final_answer.answer_text
+        state.evidence_items = list(final_answer.evidence_items)
         state.claim_assessments = (
             assess_claims(final_answer.evidence_items)
             if final_answer.evidence_items
@@ -414,6 +419,8 @@ Formatting requirements:
         claim_assessments: List[ClaimAssessment] | None = None,
         query_plan: Any | None = None,
         web_search_results: List[Dict[str, Any]] | None = None,
+        normalized_query: str = "",
+        resolved_entities: Dict[str, List[str]] | None = None,
     ) -> FinalAnswer:
         plan_type, task_type, supporting_task_types, legacy_question_type = self._resolve_task_plan_context(
             query,
@@ -437,18 +444,23 @@ Formatting requirements:
             )
 
         filtered_items = list(evidence_items)
+        primary_drug = self._resolve_primary_drug_name(
+            query=query,
+            normalized_query=normalized_query,
+            resolved_entities=resolved_entities,
+            query_plan=query_plan,
+        )
         is_direct_targets = task_type == "direct_targets"
         is_target_profile = task_type == "target_profile"
-        if is_direct_targets or is_target_profile:
-            filtered_items = self._filter_target_evidence_items(filtered_items) or filtered_items
-        elif task_type in {"clinically_relevant_ddi", "ddi_mechanism"}:
-            filtered_items = self._filter_ddi_evidence_items(filtered_items) or filtered_items
-        elif task_type == "pgx_guidance":
-            filtered_items = self._filter_pgx_evidence_items(query, filtered_items) or filtered_items
-        elif task_type == "major_adrs":
-            filtered_items = self._filter_adr_evidence_items(filtered_items) or filtered_items
-        elif task_type == "labeling_summary":
-            filtered_items = self._filter_labeling_evidence_items(query, filtered_items) or filtered_items
+        filtered_items = (
+            self._filter_items_for_task_type(
+                task_type,
+                query=query,
+                primary_drug=primary_drug,
+                evidence_items=filtered_items,
+            )
+            or filtered_items
+        )
         if not (is_direct_targets or is_target_profile):
             self._semanticize_claims_for_query_type(legacy_question_type, filtered_items)
 
@@ -465,6 +477,7 @@ Formatting requirements:
         if plan_type == "composite_query" and supporting_task_types:
             claims = self._composite_primary_claims(
                 query,
+                primary_drug,
                 task_type,
                 filtered_items,
                 assessments,
@@ -484,18 +497,29 @@ Formatting requirements:
                 claims.append(claim)
         elif is_direct_targets or is_target_profile:
             claims = self._summarize_target_claims(query, filtered_items, assessments)
+        elif task_type == "labeling_summary":
+            claims = self._summarize_labeling_claims(filtered_items, assessments)
         else:
             claims = self._summarize_claims(filtered_items, assessments)
         warnings = self._build_warnings(assessments, claims, filtered_items)
         limitations = self._build_limitations(assessments, claims, filtered_items)
         citations = self._build_citations(filtered_items)
-        web_section = build_task_aware_web_section(legacy_question_type, web_search_results or [])
-        web_summaries = summarize_web_results(web_search_results or [])
-        citations.extend(build_web_citations(web_search_results or []))
+        authority_support_results = self._authority_support_results(
+            legacy_question_type,
+            task_type,
+            supporting_task_types,
+            primary_drug,
+            evidence_items,
+            web_search_results or [],
+        )
+        web_section = build_task_aware_web_section(legacy_question_type, authority_support_results)
+        web_summaries = summarize_web_results(authority_support_results)
+        citations.extend(build_web_citations(authority_support_results))
         final_outcome, diagnostics = self._compute_task_outcome(
             task_type,
             filtered_items,
             claims,
+            primary_drug=primary_drug,
         )
         diagnostics.update(
             self._summarize_knowhow_usage(query_plan)
@@ -504,7 +528,8 @@ Formatting requirements:
         if plan_type == "composite_query" and supporting_task_types:
             answer_text = self._render_composite_answer(
                 query,
-                filtered_items,
+                primary_drug,
+                evidence_items,
                 assessments,
                 task_type,
                 supporting_task_types,
@@ -515,6 +540,7 @@ Formatting requirements:
         elif task_type == "repurposing_evidence":
             answer_text = self._render_repurposing_answer(
                 query,
+                primary_drug,
                 filtered_items,
                 warnings,
                 limitations,
@@ -567,6 +593,9 @@ Formatting requirements:
                 knowhow_lines,
             )
 
+        summary_confidence = score_answer_confidence(claims)
+        if final_outcome == "partial_with_weak_support":
+            summary_confidence = min(summary_confidence, 0.59)
         validation_issues = validate_answer_output(
             query=query,
             answer_text=answer_text,
@@ -576,10 +605,43 @@ Formatting requirements:
             diagnostics["output_validation_issue_codes"] = [
                 issue.code for issue in validation_issues
             ]
+            if task_type == "labeling_summary" and any(
+                issue.code in {
+                    "wrong_drug_labeling_answer",
+                    "canonical_drug_missing_from_labeling_answer",
+                }
+                for issue in validation_issues
+            ):
+                final_outcome = "honest_gap"
+                summary_confidence = min(summary_confidence, 0.2)
+                warnings = self._dedupe_preserve_order(
+                    [
+                        issue.message
+                        for issue in validation_issues
+                        if issue.code in {
+                            "wrong_drug_labeling_answer",
+                            "canonical_drug_missing_from_labeling_answer",
+                        }
+                    ]
+                )
+                limitations = [
+                    "Structured labeling evidence did not stay aligned with the requested drug context."
+                ]
+                claims = []
+                filtered_items = []
+                citations = []
+                answer_text = self._render_honest_gap_answer(
+                    query=query,
+                    warnings=warnings,
+                    limitations=limitations,
+                    explanation=(
+                        "No trustworthy single-drug labeling evidence could be safely surfaced for this query."
+                    ),
+                )
 
         return FinalAnswer(
             answer_text=answer_text,
-            summary_confidence=score_answer_confidence(claims),
+            summary_confidence=summary_confidence,
             key_claims=claims,
             evidence_items=list(filtered_items),
             citations=citations,
@@ -589,6 +651,53 @@ Formatting requirements:
             final_outcome=final_outcome,
             diagnostics=diagnostics,
         )
+
+    def _filter_items_for_task_type(
+        self,
+        task_type: str,
+        *,
+        query: str,
+        primary_drug: str,
+        evidence_items,
+    ) -> List[Any]:
+        normalized = normalize_task_type(task_type)
+        filtered = list(evidence_items)
+        if normalized in {"direct_targets", "target_profile"}:
+            return self._filter_target_evidence_items(filtered)
+        if normalized in {"clinically_relevant_ddi", "ddi_mechanism"}:
+            return self._filter_ddi_evidence_items(filtered, primary_drug=primary_drug)
+        if normalized == "repurposing_evidence":
+            return self._filter_repurposing_evidence_items(primary_drug, filtered)
+        if normalized == "pgx_guidance":
+            return self._filter_pgx_evidence_items(query, filtered)
+        if normalized == "major_adrs":
+            return self._filter_adr_evidence_items(filtered)
+        if normalized == "labeling_summary":
+            return self._filter_labeling_evidence_items(primary_drug, filtered)
+        if normalized == "mechanism_of_action":
+            return self._filter_mechanism_evidence_items(filtered)
+        return filtered
+
+    @staticmethod
+    def _render_honest_gap_answer(
+        *,
+        query: str,
+        warnings: List[str],
+        limitations: List[str],
+        explanation: str,
+    ) -> str:
+        lines = [
+            f"Query: {query}",
+            "",
+            explanation,
+        ]
+        if warnings:
+            lines.extend(["", "Warnings:"])
+            lines.extend(f"- {warning}" for warning in warnings)
+        if limitations:
+            lines.extend(["", "Limitations:"])
+            lines.extend(f"- {limitation}" for limitation in limitations)
+        return "\n".join(lines)
 
     @staticmethod
     def _resolve_task_plan_context(
@@ -772,6 +881,7 @@ Formatting requirements:
     def _composite_primary_claims(
         self,
         query: str,
+        primary_drug: str,
         task_type: str,
         evidence_items,
         assessments: List[ClaimAssessment],
@@ -788,12 +898,45 @@ Formatting requirements:
                 self._subset_assessments_for_items(assessments, primary_items),
             )
         if task_type == "mechanism_of_action":
-            _, _, target_claims, mechanism_claims = self._mechanism_claim_groups(
+            target_items, _, _, mechanism_claims = self._mechanism_claim_groups(
                 query,
                 evidence_items,
                 assessments,
             )
-            return target_claims + mechanism_claims
+            direct_sections, _ = self._partition_direct_target_items(target_items)
+            established_items = (
+                direct_sections["established_direct_targets"]
+                or direct_sections["association_only_signals"]
+            )
+            established_target_claims = self._summarize_target_claims(
+                query,
+                established_items,
+                self._subset_assessments_for_items(assessments, established_items),
+            )
+            if not mechanism_claims:
+                return established_target_claims
+
+            prioritized_mechanism_claims = self._prioritized_mechanism_claims(
+                target_items,
+                mechanism_claims,
+            )
+            return self._dedupe_claims_by_target_key(
+                prioritized_mechanism_claims + established_target_claims
+            )
+        if task_type == "repurposing_evidence":
+            sections, _ = self._repurposing_answer_sections(primary_drug, evidence_items)
+            approved_claims = self._summarize_repurposing_approved_indication_claims(
+                primary_drug,
+                sections["approved_indications"],
+            )
+            repurposing_items = sections["repurposing_evidence"] or sections["supporting_signals"]
+            repurposing_claims = self._summarize_claims(
+                repurposing_items,
+                self._subset_assessments_for_items(assessments, repurposing_items),
+            )
+            return approved_claims + repurposing_claims
+        if task_type == "labeling_summary":
+            return self._summarize_labeling_claims(evidence_items, assessments)
         return self._summarize_claims(evidence_items, assessments)
 
     @staticmethod
@@ -837,44 +980,59 @@ Formatting requirements:
             filtered.append(item)
         return filtered
 
-    def _filter_ddi_evidence_items(self, evidence_items) -> List[Any]:
+    def _filter_mechanism_evidence_items(self, evidence_items) -> List[Any]:
+        filtered = [
+            item
+            for item in evidence_items
+            if self._is_target_evidence_item(item) or self._is_mechanism_evidence_item(item)
+        ]
+        target_items = [item for item in filtered if self._is_target_evidence_item(item)]
+        if not target_items:
+            return filtered
+        return [
+            item
+            for item in filtered
+            if not (
+                self._is_target_evidence_item(item)
+                and self._is_fusion_component_only_signal(item, target_items)
+            )
+        ]
+
+    def _filter_ddi_evidence_items(self, evidence_items, *, primary_drug: str = "") -> List[Any]:
         ddi_like_items: List[Any] = []
         informative_items: List[Any] = []
+        ddi_source_skills = {"ddinter", "kegg drug", "mecddi", "drugbank"}
+        labeling_source_skills = {"openfda human drug", "dailymed"}
 
         for item in evidence_items:
             relationship = str(item.metadata.get("relationship", "")).lower()
             source_skill = str(getattr(item, "source_skill", "")).strip().lower()
+            field_name = str(item.structured_payload.get("field") or "").strip().lower()
+            has_interaction_marker = (
+                "interaction" in relationship
+                or "interact" in relationship
+                or "ddi" in relationship
+                or field_name == "drug_interactions"
+            )
+            is_ddi_source = source_skill in ddi_source_skills
+            is_label_interaction = source_skill in labeling_source_skills and has_interaction_marker
+            if not has_interaction_marker and not is_ddi_source and not is_label_interaction:
+                continue
             if (
-                "interaction" not in relationship
-                and "ddi" not in relationship
-                and source_skill not in {"ddinter", "kegg drug", "mecddi", "drugbank"}
+                primary_drug
+                and source_skill in labeling_source_skills
+                and not self._is_single_agent_label_match(primary_drug, item)
             ):
                 continue
 
             ddi_like_items.append(item)
-            description = str(
-                item.structured_payload.get("ddi_description")
-                or item.structured_payload.get("description")
-                or ""
-            ).strip()
-            target_entity = str(item.metadata.get("target_entity", "")).strip()
-            partner = ""
-            if target_entity and not self._looks_like_compound_identifier(target_entity):
-                partner = target_entity
-            if not partner:
-                partner = self._extract_partner_from_text(description) or self._extract_partner_from_text(
-                    str(getattr(item, "snippet", "") or "")
-                )
-            if partner and self._looks_like_compound_identifier(partner):
-                partner = ""
-
-            if partner or (description and description.lower() != "unclassified"):
+            if self._is_informative_ddi_item(item):
                 informative_items.append(item)
 
         if informative_items:
-            return informative_items
+            return sorted(informative_items, key=self._ddi_item_priority, reverse=True)
         if ddi_like_items:
-            return ddi_like_items
+            return sorted(ddi_like_items, key=self._ddi_item_priority, reverse=True)
         return []
 
     def _filter_pgx_evidence_items(self, query: str, evidence_items) -> List[Any]:
@@ -912,6 +1070,12 @@ Formatting requirements:
 
     @staticmethod
     def _filter_adr_evidence_items(evidence_items) -> List[Any]:
+        adr_relationships = {
+            "causes_adverse_event",
+            "classified_adr",
+            "has_side_effect",
+            "associated_with_adverse_event",
+        }
         noise_targets = {
             "SCHIZOPHRENIA",
             "OFF LABEL USE",
@@ -921,33 +1085,30 @@ Formatting requirements:
             "DRUG INEFFECTIVE",
             "DRUG INTERACTION",
             "TOXICITY TO VARIOUS AGENTS",
+            "DEATH",
+            "NEUTROPHILIA",
+            "WHITE BLOOD CELL COUNT INCREASED",
+            "NEUTROPHIL COUNT INCREASED",
         }
         filtered = []
         for item in evidence_items:
             relationship = str(item.metadata.get("relationship", "")).lower()
             target_entity = str(item.metadata.get("target_entity", "")).strip().upper()
-            if relationship != "causes_adverse_event":
+            if relationship not in adr_relationships:
                 continue
             if target_entity in noise_targets:
                 continue
             filtered.append(item)
-        return filtered
+        return sorted(filtered, key=ResponderAgent._adr_item_priority, reverse=True)
 
-    def _filter_labeling_evidence_items(self, query: str, evidence_items) -> List[Any]:
-        primary_drug = self._extract_query_drug_name(query)
+    def _filter_labeling_evidence_items(self, primary_drug: str, evidence_items) -> List[Any]:
         filtered = list(evidence_items)
 
         if primary_drug:
             strict_matches = []
             for item in filtered:
-                source_entity = str(item.metadata.get("source_entity", "")).strip().lower()
-                if not source_entity:
-                    continue
-                if primary_drug not in source_entity:
-                    continue
-                if " and " in source_entity and not source_entity.startswith(primary_drug):
-                    continue
-                strict_matches.append(item)
+                if self._is_single_agent_label_match(primary_drug, item):
+                    strict_matches.append(item)
             if strict_matches:
                 filtered = strict_matches
 
@@ -957,6 +1118,9 @@ Formatting requirements:
             "has_adverse_reaction",
             "interacts_with",
             "has_mechanism",
+            "has_contraindication",
+            "use_in_special_population",
+            "has_dosing_guidance",
         }
         if any(
             str(item.metadata.get("relationship", "")).lower() in primary_label_relationships
@@ -970,7 +1134,160 @@ Formatting requirements:
             if richer_items:
                 filtered = richer_items
 
-        return filtered
+        ranked = sorted(filtered, key=self._labeling_item_priority, reverse=True)
+        deduped: List[Any] = []
+        seen_slots = set()
+        for item in ranked:
+            slot_key = self._labeling_slot_key(item)
+            if slot_key in seen_slots:
+                continue
+            seen_slots.add(slot_key)
+            deduped.append(item)
+        return deduped
+
+    def _filter_repurposing_evidence_items(
+        self,
+        primary_drug: str,
+        evidence_items,
+    ) -> List[Any]:
+        approved_indication_items: List[Any] = []
+        filtered: List[Any] = []
+        for item in evidence_items:
+            classification = classify_evidence_item("drug_repurposing", item)
+            source_skill = str(getattr(item, "source_skill", "")).strip()
+            relationship = str(item.metadata.get("relationship", "")).strip().lower()
+
+            if classification.slot == "repurposing_evidence":
+                filtered.append(item)
+                continue
+
+            if classification.slot == "approved_indications":
+                if source_skill in {"DailyMed", "openFDA Human Drug"} and relationship == "indicated_for":
+                    if primary_drug and not self._is_single_agent_label_match(primary_drug, item):
+                        continue
+                approved_indication_items.append(item)
+                continue
+
+            if classification.slot == "additional_context":
+                if source_skill in {"DailyMed", "openFDA Human Drug"}:
+                    continue
+                if primary_drug:
+                    source_entity = str(item.metadata.get("source_entity", "")).strip().lower()
+                    if source_entity and primary_drug not in source_entity:
+                        continue
+                filtered.append(item)
+
+        return self._dedupe_repurposing_approved_indication_items(
+            primary_drug,
+            approved_indication_items,
+        ) + filtered
+
+    def _dedupe_repurposing_approved_indication_items(
+        self,
+        primary_drug: str,
+        items,
+    ) -> List[Any]:
+        filtered = list(items)
+        if primary_drug:
+            strict_matches = [
+                item for item in filtered if self._is_single_agent_label_match(primary_drug, item)
+            ]
+            if strict_matches:
+                filtered = strict_matches
+
+        ranked = sorted(filtered, key=self._labeling_item_priority, reverse=True)
+        deduped: List[Any] = []
+        seen_keys = set()
+        for item in ranked:
+            key = self._repurposing_approved_indication_key(item)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped.append(item)
+        return deduped
+
+    def _repurposing_approved_indication_key(self, item: Any) -> tuple[str, str]:
+        relationship = str(item.metadata.get("relationship", "")).strip().lower()
+        source_entity = str(item.metadata.get("source_entity", "")).strip().lower()
+        snippet = self._clean_label_text(str(getattr(item, "snippet", "") or "")).lower()
+        if "indicated" in snippet:
+            snippet = snippet.rsplit("indicated", 1)[1].strip()
+        snippet = re.sub(r"^(?:as|for)\s+", "", snippet)
+        snippet = re.sub(r"^[^a-z0-9]+", "", snippet)
+        snippet = re.sub(r"\s+", " ", snippet).strip(" .;,:")
+        return relationship or "approved_indication", snippet or source_entity
+
+    @staticmethod
+    def _labeling_slot_key(item: Any) -> tuple[str, str]:
+        relationship = str(item.metadata.get("relationship", "")).strip().lower()
+        field_name = str(item.structured_payload.get("field") or "").strip().lower()
+        target_entity = str(item.metadata.get("target_entity", "")).strip().lower()
+        if not relationship and not field_name and not target_entity:
+            evidence_id = str(getattr(item, "evidence_id", "")).strip().lower()
+            claim = str(getattr(item, "claim", "")).strip().lower()
+            return "unstructured_labeling", evidence_id or claim
+        return relationship, field_name or target_entity
+
+    @staticmethod
+    def _labeling_item_priority(item: Any) -> tuple[int, int, float]:
+        relationship = str(item.metadata.get("relationship", "")).strip().lower()
+        source_skill = str(getattr(item, "source_skill", "")).strip().lower()
+        relationship_priority = {
+            "has_warning": 8,
+            "has_contraindication": 7,
+            "use_in_special_population": 6,
+            "has_dosing_guidance": 5,
+            "indicated_for": 4,
+            "has_adverse_reaction": 3,
+            "interacts_with": 2,
+            "has_mechanism": 1,
+            "has_official_label": 0,
+        }.get(relationship, 0)
+        source_priority = (
+            2 if source_skill == "openfda human drug"
+            else 1 if source_skill == "dailymed"
+            else 0
+        )
+        retrieval_score = float(getattr(item, "retrieval_score", 0.0) or 0.0)
+        return (relationship_priority, source_priority, retrieval_score)
+
+    def _is_single_agent_label_match(self, primary_drug: str, item: Any) -> bool:
+        identity_values = self._label_identity_values(item)
+        if not any(primary_drug in value for value in identity_values):
+            return False
+        return not self._looks_like_combination_label_item(item, identity_values)
+
+    @staticmethod
+    def _label_identity_values(item: Any) -> List[str]:
+        metadata = getattr(item, "metadata", {}) or {}
+        generic_names = metadata.get("generic_names") or []
+        if isinstance(generic_names, str):
+            generic_names = [generic_names]
+
+        values = [
+            str(metadata.get("source_entity", "")).strip().lower(),
+            str(metadata.get("brand_name", "")).strip().lower(),
+            str(metadata.get("queried_drug", "")).strip().lower(),
+        ]
+        values.extend(
+            str(name).strip().lower()
+            for name in generic_names
+            if str(name).strip()
+        )
+        return [value for value in values if value]
+
+    @staticmethod
+    def _looks_like_combination_label_item(item: Any, identity_values: List[str] | None = None) -> bool:
+        metadata = getattr(item, "metadata", {}) or {}
+        if bool(metadata.get("is_combination_product")):
+            return True
+
+        candidates = identity_values or []
+        return any(
+            separator in value
+            for value in candidates
+            for separator in (" and ", "/", ";", ",")
+        )
 
     @staticmethod
     def _extract_query_drug_name(query: str) -> str:
@@ -992,13 +1309,41 @@ Formatting requirements:
                 return match.group(1)
         return ""
 
+    def _resolve_primary_drug_name(
+        self,
+        *,
+        query: str,
+        normalized_query: str = "",
+        resolved_entities: Dict[str, List[str]] | None = None,
+        query_plan: Any | None = None,
+    ) -> str:
+        normalized_resolved = resolved_entities or {}
+        resolved_drugs = normalized_resolved.get("drug") or []
+        if resolved_drugs:
+            return str(resolved_drugs[0]).strip().lower()
+
+        normalized_drug = self._extract_query_drug_name(normalized_query)
+        if normalized_drug:
+            return normalized_drug
+
+        plan_entities = getattr(query_plan, "entities", {}) or {}
+        plan_drugs = plan_entities.get("drug") or []
+        if plan_drugs:
+            return str(plan_drugs[0]).strip().lower()
+
+        return self._extract_query_drug_name(query)
+
     def _semanticize_claims_for_query_type(self, query_type: str, evidence_items) -> None:
         for item in evidence_items:
-            semantic_claim = self._semantic_claim_for_item(query_type, item)
+            semantic_claim = self._semantic_claim_for_item(
+                query_type,
+                item,
+                evidence_items=evidence_items,
+            )
             if semantic_claim:
                 item.claim = semantic_claim
 
-    def _semantic_claim_for_item(self, query_type: str, item: Any) -> str:
+    def _semantic_claim_for_item(self, query_type: str, item: Any, evidence_items=None) -> str:
         if query_type in {"ddi", "ddi_mechanism"}:
             return self._ddi_claim_for_item(item)
         if query_type == "drug_repurposing":
@@ -1006,7 +1351,7 @@ Formatting requirements:
         if query_type == "labeling":
             return self._labeling_claim_for_item(item)
         if query_type == "mechanism":
-            return self._mechanism_claim_for_item(item)
+            return self._mechanism_claim_for_item(item, evidence_items=evidence_items)
         if query_type == "pharmacogenomics":
             return self._pgx_claim_for_item(item)
         if query_type == "adr":
@@ -1015,37 +1360,585 @@ Formatting requirements:
 
     def _ddi_claim_for_item(self, item: Any) -> str:
         source_entity = str(item.metadata.get("source_entity", "")).strip()
-        target_entity = str(item.metadata.get("target_entity", "")).strip()
+        description = str(
+            item.structured_payload.get("ddi_description")
+            or item.structured_payload.get("description")
+            or item.structured_payload.get("mechanism")
+            or ""
+        ).strip()
+        management = str(
+            item.structured_payload.get("management")
+            or item.structured_payload.get("recommendation")
+            or ""
+        ).strip()
+        severity = str(item.structured_payload.get("severity") or "").strip()
+        label = str(item.structured_payload.get("ddi_label") or "").strip()
+        partner = self._ddi_partner_name(item)
+        details = self._normalize_ddi_details(description, label)
+        detail_parts: List[str] = []
+        if severity:
+            detail_parts.append(severity)
+        if details:
+            detail_parts.append(details)
+        if management and management.lower() not in " ".join(detail_parts).lower():
+            detail_parts.append(management)
+
+        if source_entity and partner:
+            if detail_parts:
+                return f"{source_entity} interacts with {partner} ({'; '.join(detail_parts)})"
+            return f"{source_entity} interacts with {partner}"
+        if description.lower().startswith("enzyme:"):
+            enzyme = description.split(":", 1)[1].strip()
+            if enzyme:
+                return f"{source_entity} interaction mechanism involves {enzyme}"
+        if source_entity and description.lower() == "unclassified":
+            return f"{source_entity} has unresolved KEGG interaction entries"
+        if source_entity and description:
+            if detail_parts and description not in detail_parts:
+                return f"{source_entity} has a clinically important interaction: {'; '.join(detail_parts)}"
+            return f"{source_entity} has a clinically important interaction: {description}"
+        return ""
+
+    def _authority_support_results(
+        self,
+        question_type: str,
+        primary_task_type: str,
+        supporting_task_types: List[str],
+        primary_drug: str,
+        evidence_items,
+        web_search_results: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        results = list(web_search_results or [])
+        wants_repurposing_support = (
+            question_type == "drug_repurposing"
+            or normalize_task_type(primary_task_type) == "repurposing_evidence"
+            or any(
+                normalize_task_type(task_type) == "repurposing_evidence"
+                for task_type in supporting_task_types
+            )
+        )
+        if wants_repurposing_support:
+            return self._filter_repurposing_authority_results(
+                primary_drug,
+                evidence_items,
+                results,
+            )
+
+        normalized_primary_task = normalize_task_type(primary_task_type)
+        normalized_supporting_tasks = {
+            normalize_task_type(task_type) for task_type in supporting_task_types
+        }
+        if (
+            question_type in {"ddi", "ddi_mechanism"}
+            or normalized_primary_task in {"ddi_mechanism", "clinically_relevant_ddi"}
+            or normalized_supporting_tasks.intersection({"ddi_mechanism", "clinically_relevant_ddi"})
+        ):
+            return self._filter_ddi_authority_results(primary_drug, evidence_items, results)
+        if (
+            question_type == "adr"
+            or normalized_primary_task == "major_adrs"
+            or "major_adrs" in normalized_supporting_tasks
+        ):
+            adr_results = self._filter_adr_authority_results(primary_drug, evidence_items, results)
+            synthesized = self._synthesize_labeling_authority_results(primary_drug, evidence_items)
+            if synthesized:
+                return self._merge_authority_results(synthesized, adr_results)
+            return adr_results
+
+        wants_labeling_support = (
+            question_type == "labeling"
+            or normalize_task_type(primary_task_type) == "labeling_summary"
+            or any(
+                normalize_task_type(task_type) == "labeling_summary"
+                for task_type in supporting_task_types
+            )
+        )
+        if not wants_labeling_support:
+            return results
+        if self._has_official_labeling_web_result(results):
+            return results
+        synthesized = self._synthesize_labeling_authority_results(primary_drug, evidence_items)
+        if not synthesized:
+            return results
+        return self._merge_authority_results(synthesized, results)
+
+    def _filter_repurposing_authority_results(
+        self,
+        primary_drug: str,
+        evidence_items,
+        results: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if not results:
+            return []
+
+        target_terms = {
+            str(item.metadata.get("target_entity", "")).strip().lower()
+            for item in evidence_items
+            if str(item.metadata.get("target_entity", "")).strip()
+            and str(item.metadata.get("target_type", "")).strip().lower() == "disease"
+        }
+        repurposing_markers = (
+            "repurpos",
+            "reposition",
+            "investigational",
+            "clinical trial",
+            "new indication",
+            "drug development",
+            "signal",
+            "candidate",
+        )
+
+        filtered: List[Dict[str, Any]] = []
+        for result in results:
+            text = " ".join(
+                str(result.get(field, "")).strip().lower()
+                for field in ("title", "snippet")
+            ).strip()
+            source = str(result.get("source", "")).strip().lower()
+            domain = normalize_result_domain(result)
+
+            if not text:
+                continue
+
+            is_official_trial_source = source == "clinicaltrials.gov" or domain == "clinicaltrials.gov"
+            if is_official_trial_source:
+                if primary_drug and primary_drug in text:
+                    filtered.append(result)
+                    continue
+                if any(term in text for term in target_terms):
+                    filtered.append(result)
+                    continue
+                continue
+
+            if primary_drug and primary_drug not in text:
+                continue
+
+            has_repurposing_marker = any(marker in text for marker in repurposing_markers)
+            has_target_term = any(term in text for term in target_terms)
+            if has_repurposing_marker or has_target_term:
+                filtered.append(result)
+
+        return filtered
+
+    def _filter_ddi_authority_results(
+        self,
+        primary_drug: str,
+        evidence_items,
+        results: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if not results:
+            return []
+
+        partner_terms = {
+            self._normalize_authority_text(self._ddi_partner_name(item))
+            for item in evidence_items
+            if self._ddi_partner_name(item)
+        }
+        ddi_markers = (
+            "interaction",
+            "interact",
+            "inr",
+            "bleed",
+            "bleeding",
+            "cyp",
+            "exposure",
+            "monitor",
+            "dose",
+            "contraind",
+            "management",
+        )
+        filtered: List[Dict[str, Any]] = []
+        for result in results:
+            text = self._normalize_authority_text(
+                " ".join(str(result.get(field, "")).strip() for field in ("title", "snippet"))
+            )
+            if not text:
+                continue
+            if primary_drug and primary_drug not in text:
+                continue
+            domain = normalize_result_domain(result)
+            is_official_result = (
+                domain == "dailymed.nlm.nih.gov"
+                or domain == "fda.gov"
+                or domain.endswith(".fda.gov")
+            )
+            has_partner = any(term and term in text for term in partner_terms)
+            has_ddi_marker = any(marker in text for marker in ddi_markers)
+            if has_partner:
+                filtered.append(result)
+                continue
+            if is_official_result and has_ddi_marker:
+                filtered.append(result)
+                continue
+            if not partner_terms and has_ddi_marker:
+                filtered.append(result)
+        return filtered
+
+    def _filter_adr_authority_results(
+        self,
+        primary_drug: str,
+        evidence_items,
+        results: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if not results:
+            return []
+
+        risk_terms = {
+            self._normalize_authority_text(str(item.metadata.get("target_entity", "")))
+            for item in evidence_items
+            if str(item.metadata.get("target_entity", "")).strip()
+        }
+        risk_terms.update(
+            {
+                "anc",
+                "neutropenia",
+                "agranulocytosis",
+                "myocarditis",
+                "pericarditis",
+                "cardiomyopathy",
+                "seizure",
+                "monitor",
+                "monitoring",
+                "safety",
+                "warning",
+            }
+        )
+        filtered: List[Dict[str, Any]] = []
+        for result in results:
+            text = self._normalize_authority_text(
+                " ".join(str(result.get(field, "")).strip() for field in ("title", "snippet"))
+            )
+            if not text:
+                continue
+            if primary_drug and primary_drug not in text:
+                continue
+            if any(term and term in text for term in risk_terms):
+                filtered.append(result)
+        return filtered
+
+    @staticmethod
+    def _normalize_authority_text(text: str) -> str:
+        return re.sub(r"\s+", " ", str(text or "").strip().lower())
+
+    @staticmethod
+    def _merge_authority_results(
+        preferred_results: List[Dict[str, Any]],
+        fallback_results: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        seen = set()
+        for result in list(preferred_results) + list(fallback_results):
+            url = str(result.get("url", "")).strip()
+            title = str(result.get("title", "")).strip()
+            source = str(result.get("source", "")).strip()
+            key = (url, title, source)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(result)
+        return merged
+
+    @staticmethod
+    def _has_official_labeling_web_result(results: List[Dict[str, Any]]) -> bool:
+        for result in results:
+            url = str(result.get("url", "")).strip().lower()
+            metadata = result.get("metadata", {}) or {}
+            if not url:
+                url = str(metadata.get("url", "")).strip().lower()
+            if "dailymed.nlm.nih.gov" in url or "fda.gov" in url:
+                return True
+        return False
+
+    def _synthesize_labeling_authority_results(
+        self,
+        primary_drug: str,
+        evidence_items,
+    ) -> List[Dict[str, Any]]:
+        synthesized: List[Dict[str, Any]] = []
+        seen_urls = set()
+        dailymed_items = sorted(
+            list(evidence_items),
+            key=self._labeling_item_priority,
+            reverse=True,
+        )
+        for item in dailymed_items:
+            source_skill = str(getattr(item, "source_skill", "")).strip().lower()
+            relationship = str(item.metadata.get("relationship", "")).strip().lower()
+            if source_skill != "dailymed" or relationship != "has_official_label":
+                continue
+            if primary_drug and not self._is_single_agent_label_match(primary_drug, item):
+                continue
+
+            url = self._labeling_authority_url(item, fallback_url="https://dailymed.nlm.nih.gov/dailymed/")
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            title = str(item.metadata.get("target_entity", "")).strip() or "DailyMed official label"
+            snippet = self._clean_label_text(str(getattr(item, "snippet", "") or "")) or title
+            synthesized.append(
+                {
+                    "source": "DailyMed",
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet,
+                    "metadata": {"url": url},
+                    "search_purpose": "official labeling support",
+                }
+            )
+            if len(synthesized) >= 3:
+                break
+
+        if len(synthesized) >= 3:
+            return synthesized
+
+        openfda_label_relationships = {
+            "has_warning",
+            "has_contraindication",
+            "use_in_special_population",
+            "has_dosing_guidance",
+            "indicated_for",
+            "interacts_with",
+        }
+        openfda_items = sorted(
+            [
+                item
+                for item in evidence_items
+                if str(getattr(item, "source_skill", "")).strip().lower() == "openfda human drug"
+            ],
+            key=self._labeling_item_priority,
+            reverse=True,
+        )
+        for item in openfda_items:
+            source_skill = str(getattr(item, "source_skill", "")).strip().lower()
+            relationship = str(item.metadata.get("relationship", "")).strip().lower()
+            if source_skill != "openfda human drug" or relationship not in openfda_label_relationships:
+                continue
+            if primary_drug and not self._is_single_agent_label_match(primary_drug, item):
+                continue
+
+            url = self._labeling_authority_url(item, fallback_url="https://open.fda.gov/apis/drug/label/")
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            title_source = str(item.metadata.get("source_entity", "")).strip() or primary_drug or "openFDA drug label"
+            relationship_label = relationship.replace("_", " ")
+            title = f"{title_source} {relationship_label}".strip()
+            snippet = self._clean_label_text(str(getattr(item, "snippet", "") or "")) or title
+            synthesized.append(
+                {
+                    "source": "openFDA",
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet,
+                    "metadata": {"url": url},
+                    "search_purpose": "official labeling support",
+                }
+            )
+            if len(synthesized) >= 3:
+                break
+        return synthesized
+
+    @staticmethod
+    def _labeling_authority_url(item: Any, *, fallback_url: str) -> str:
+        candidate = str(getattr(item, "source_locator", "")).strip()
+        if candidate.startswith("http"):
+            return candidate
+
+        sources = (getattr(item, "structured_payload", {}) or {}).get("sources") or []
+        for source in sources:
+            source_url = str(source).strip()
+            if source_url.startswith("http"):
+                return source_url
+
+        return fallback_url
+
+    def _is_informative_ddi_item(self, item: Any) -> bool:
         description = str(
             item.structured_payload.get("ddi_description")
             or item.structured_payload.get("description")
             or ""
         ).strip()
+        management = str(
+            item.structured_payload.get("management")
+            or item.structured_payload.get("recommendation")
+            or ""
+        ).strip()
+        severity = str(item.structured_payload.get("severity") or "").strip()
         label = str(item.structured_payload.get("ddi_label") or "").strip()
+        if management:
+            return True
+        if description and description.lower() != "unclassified":
+            return True
+        if self._ddi_severity_priority(severity) >= 2:
+            return True
+        return self._ddi_label_priority(label) >= 2
+
+    def _ddi_item_priority(self, item: Any) -> tuple[int, int, int, int, float]:
+        description = str(
+            item.structured_payload.get("ddi_description")
+            or item.structured_payload.get("description")
+            or ""
+        ).strip()
+        management = str(
+            item.structured_payload.get("management")
+            or item.structured_payload.get("recommendation")
+            or ""
+        ).strip()
+        severity = str(item.structured_payload.get("severity") or "").strip()
+        label = str(item.structured_payload.get("ddi_label") or "").strip()
+        source_skill = str(getattr(item, "source_skill", "")).strip().lower()
+        partner = self._ddi_partner_name(item)
+        description_priority = 2 if description and description.lower() != "unclassified" else 0
+        management_priority = 1 if management else 0
+        source_priority = (
+            3 if source_skill == "ddinter"
+            else 2 if source_skill in {"mecddi", "drugbank", "dailymed", "openfda human drug"}
+            else 1 if source_skill == "kegg drug"
+            else 0
+        )
+        partner_priority = 1 if partner else 0
+        retrieval_score = float(getattr(item, "retrieval_score", 0.0) or 0.0)
+        return (
+            management_priority,
+            description_priority,
+            self._ddi_severity_priority(severity),
+            self._ddi_label_priority(label),
+            source_priority,
+            partner_priority,
+            retrieval_score,
+        )
+
+    def _ddi_partner_name(self, item: Any) -> str:
+        target_entity = str(item.metadata.get("target_entity", "")).strip()
+        target_name = str(item.metadata.get("target_name", "")).strip()
+        description = str(
+            item.structured_payload.get("ddi_description")
+            or item.structured_payload.get("description")
+            or ""
+        ).strip()
         snippet = str(getattr(item, "snippet", "") or "").strip()
 
         partner = ""
-        if target_entity and not self._looks_like_compound_identifier(target_entity):
+        if (
+            target_entity
+            and not self._looks_like_compound_identifier(target_entity)
+            and not self._looks_like_generic_label_ddi_target(target_entity)
+        ):
             partner = target_entity
+        if (
+            not partner
+            and target_name
+            and not self._looks_like_compound_identifier(target_name)
+            and not self._looks_like_generic_label_ddi_target(target_name)
+        ):
+            partner = target_name
         if not partner:
-            partner = self._extract_partner_from_text(description) or self._extract_partner_from_text(snippet)
+            partner = (
+                self._extract_label_ddi_partner(description)
+                or self._extract_label_ddi_partner(snippet)
+                or self._extract_partner_from_text(description)
+                or self._extract_partner_from_text(snippet)
+            )
         if partner and self._looks_like_compound_identifier(partner):
-            partner = ""
+            return ""
+        return partner
 
-        if description.lower().startswith("enzyme:"):
-            enzyme = description.split(":", 1)[1].strip()
-            if enzyme:
-                return f"{source_entity} interaction mechanism involves {enzyme}"
-        if source_entity and partner:
-            details = description or label
-            if details:
-                return f"{source_entity} interacts with {partner} ({details})"
-            return f"{source_entity} interacts with {partner}"
-        if source_entity and description.lower() == "unclassified":
-            return f"{source_entity} has unresolved KEGG interaction entries"
-        if source_entity and description:
-            return f"{source_entity} has a clinically important interaction: {description}"
-        return ""
+    @staticmethod
+    def _looks_like_generic_label_ddi_target(value: str) -> bool:
+        normalized = str(value or "").strip().lower()
+        return normalized in {
+            "drug interactions",
+            "interaction information",
+            "interactions",
+        }
+
+    @staticmethod
+    def _extract_label_ddi_partner(text: str) -> str:
+        cleaned = ResponderAgent._clean_label_text(text)
+        if not cleaned:
+            return ""
+
+        if "Clinical Impact:" in cleaned:
+            prefix = cleaned.split("Clinical Impact:", 1)[0].strip()
+            prefix = re.sub(r"^Table\s+\d+:\s*", "", prefix, flags=re.IGNORECASE)
+            for dosage_form in (
+                " tablets ",
+                " tablet ",
+                " capsules ",
+                " capsule ",
+                " injection ",
+                " oral solution ",
+                " oral suspension ",
+            ):
+                index = prefix.lower().rfind(dosage_form)
+                if index >= 0:
+                    prefix = prefix[index + len(dosage_form):]
+                    break
+            candidate = prefix.strip(" :-;,")
+            if candidate and not ResponderAgent._looks_like_generic_label_ddi_target(candidate):
+                return candidate
+
+        match = re.search(
+            r"(?:concomitant use of|coadministered with)\s+([A-Za-z][A-Za-z0-9+/\-\s]{1,80}?)(?:\s+may\b|[:.;,])",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return ""
+        candidate = match.group(1).strip(" :-;,")
+        if ResponderAgent._looks_like_generic_label_ddi_target(candidate):
+            return ""
+        return candidate
+
+    def _normalize_ddi_details(self, description: str, label: str) -> str:
+        if description and description.lower() != "unclassified":
+            return description
+        label_text = self._humanize_ddi_label(label)
+        if label_text:
+            return label_text
+        return description
+
+    @staticmethod
+    def _ddi_severity_priority(severity: str) -> int:
+        normalized = str(severity or "").strip().lower()
+        if normalized in {"contraindicated", "contraindication"}:
+            return 3
+        if normalized == "major":
+            return 2
+        if normalized == "moderate":
+            return 1
+        return 0
+
+    @staticmethod
+    def _ddi_label_priority(label: str) -> int:
+        tokens = ResponderAgent._ddi_label_tokens(label)
+        if "CI" in tokens:
+            return 3
+        if "C" in tokens:
+            return 2
+        if "P" in tokens:
+            return 1
+        return 0
+
+    @staticmethod
+    def _humanize_ddi_label(label: str) -> str:
+        mapping = {
+            "CI": "contraindication",
+            "C": "caution",
+            "P": "precaution",
+        }
+        parts: List[str] = []
+        for token in ResponderAgent._ddi_label_tokens(label):
+            mapped = mapping.get(token)
+            if mapped and mapped not in parts:
+                parts.append(mapped)
+        return ", ".join(parts)
+
+    @staticmethod
+    def _ddi_label_tokens(label: str) -> List[str]:
+        return [token.strip().upper() for token in str(label or "").split(",") if token.strip()]
 
     def _labeling_claim_for_item(self, item: Any) -> str:
         source_entity = str(item.metadata.get("source_entity", "")).strip()
@@ -1059,8 +1952,18 @@ Formatting requirements:
             return f"{source_entity} warning: {snippet}"
         if relationship == "has_adverse_reaction" and snippet:
             return f"{source_entity} adverse reactions: {snippet}"
-        if relationship == "interacts_with" and snippet:
-            return f"{source_entity} interaction information: {snippet}"
+        if relationship == "has_contraindication" and snippet:
+            return f"{source_entity} contraindications: {snippet}"
+        if relationship == "use_in_special_population" and snippet:
+            return f"{source_entity} special-population use: {snippet}"
+        if relationship == "interacts_with":
+            partner = self._ddi_partner_name(item)
+            if source_entity and partner:
+                return f"{source_entity} interaction information: {partner}"
+            if snippet:
+                return f"{source_entity} interaction information: {snippet}"
+        if relationship == "has_dosing_guidance" and snippet:
+            return f"{source_entity} dosing guidance: {snippet}"
         if relationship == "has_mechanism" and snippet:
             return f"{source_entity} mechanism: {snippet}"
         if relationship == "has_patient_drug_info" and target_entity:
@@ -1073,6 +1976,7 @@ Formatting requirements:
         return ""
 
     def _repurposing_claim_for_item(self, item: Any) -> str:
+        source_skill = str(getattr(item, "source_skill", "")).strip()
         source_entity = str(item.metadata.get("source_entity", "")).strip()
         relationship = str(item.metadata.get("relationship", "")).strip().lower()
         target_entity = str(item.metadata.get("target_entity", "")).strip()
@@ -1084,11 +1988,39 @@ Formatting requirements:
             or ""
         ).strip()
         status = str(item.structured_payload.get("status") or "").strip()
+        pmid = str(item.structured_payload.get("pmid") or "").strip()
+        score = str(item.structured_payload.get("score") or "").strip()
+        evidence = str(item.structured_payload.get("evidence") or "").strip()
 
         if relationship == "repurposing_evidence" and source_entity and target_entity:
             details = [detail for detail in (status, phase) if detail]
             suffix = f" ({'; '.join(details)})" if details else ""
             return f"{source_entity} has repurposing evidence for {target_entity}{suffix}"
+        if source_skill == "RepurposeDrugs" and relationship == "repurposed_for" and source_entity and target_entity:
+            details = [detail for detail in (status, phase) if detail]
+            if score:
+                details.append(f"score {score}")
+            suffix = f" ({'; '.join(details)})" if details else ""
+            return f"{source_entity} has exploratory repurposing signal for {target_entity}{suffix}"
+        if relationship == "repurposed_for" and source_entity and target_entity:
+            details = [detail for detail in (status, phase) if detail]
+            if pmid:
+                details.append(f"PMID {pmid}")
+            if score:
+                details.append(f"score {score}")
+            suffix = f" ({'; '.join(details)})" if details else ""
+            return f"{source_entity} has repurposing evidence for {target_entity}{suffix}"
+        if (
+            source_skill == "OREGANO"
+            and relationship in {"clinical_signal", "repurposing_candidate"}
+            and source_entity
+            and target_entity
+        ):
+            details = [relationship.replace("_", " ")]
+            if evidence:
+                details.append(evidence)
+            suffix = f" ({'; '.join(details)})" if details else ""
+            return f"{source_entity} has exploratory repurposing signal for {target_entity}{suffix}"
         if relationship == "indicated_for" and source_entity and target_entity:
             if target_type == "disease":
                 return f"{source_entity} is indicated for {target_entity}"
@@ -1103,7 +2035,86 @@ Formatting requirements:
             return f"{source_entity} has an approved-entry roster in DrugCentral"
         return ""
 
-    def _mechanism_claim_for_item(self, item: Any) -> str:
+    def _summarize_repurposing_approved_indication_claims(
+        self,
+        primary_drug: str,
+        items,
+    ) -> List[ClaimSummary]:
+        grouped: Dict[str, List[Any]] = defaultdict(list)
+        for item in items:
+            claim = self._repurposing_approved_indication_summary_claim(primary_drug, item)
+            if not claim:
+                continue
+            grouped[claim].append(item)
+
+        summaries: List[ClaimSummary] = []
+        for claim, grouped_items in grouped.items():
+            citations = [
+                f"[{item.evidence_id}] {item.source_skill} ({item.source_locator})"
+                for item in grouped_items
+            ]
+            summaries.append(
+                ClaimSummary(
+                    claim=claim,
+                    confidence=score_claim_confidence(grouped_items),
+                    evidence_ids=[item.evidence_id for item in grouped_items],
+                    citations=citations,
+                )
+            )
+        return summaries
+
+    def _repurposing_approved_indication_summary_claim(
+        self,
+        primary_drug: str,
+        item: Any,
+    ) -> str:
+        indication = self._extract_repurposing_approved_indication(item)
+        if not indication:
+            return ""
+        drug_label = primary_drug.strip() if primary_drug else str(item.metadata.get("source_entity", "")).strip()
+        if not drug_label:
+            return ""
+        return f"{drug_label} is approved for {indication}"
+
+    def _extract_repurposing_approved_indication(self, item: Any) -> str:
+        relationship = str(item.metadata.get("relationship", "")).strip().lower()
+        if relationship != "indicated_for":
+            return ""
+
+        target_entity = str(item.metadata.get("target_entity", "")).strip()
+        target_type = str(item.metadata.get("target_type", "")).strip().lower()
+        if target_entity and target_type == "disease":
+            return target_entity
+
+        snippet = self._clean_label_text(str(getattr(item, "snippet", "") or ""))
+        if not snippet:
+            return ""
+
+        patterns = (
+            r"\bpatients?\s+with\s+([^.;]+?)(?:[.;]|$)",
+            r"\bwith\s+([^.;]+?)(?:[.;]|$)",
+            r"\bfor\s+(?:the treatment of\s+)?([^.;]+?)(?:[.;]|$)",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, snippet, flags=re.IGNORECASE)
+            if not match:
+                continue
+            candidate = match.group(1).strip(" ,;:.")
+            candidate = re.sub(r"\s+", " ", candidate).strip()
+            if not candidate:
+                continue
+            candidate_lower = candidate.lower()
+            if candidate_lower in {
+                "indications and usage",
+                "adults",
+                "adult patients",
+                "pediatric patients",
+            }:
+                continue
+            return candidate_lower
+        return ""
+
+    def _mechanism_claim_for_item(self, item: Any, evidence_items=None) -> str:
         source_entity = str(item.metadata.get("source_entity", "")).strip()
         relationship = str(item.metadata.get("relationship", "")).strip().lower()
         target_entity = str(item.metadata.get("target_entity", "")).strip()
@@ -1113,15 +2124,66 @@ Formatting requirements:
             or item.metadata.get("mechanism_of_action")
             or ""
         ).strip()
+        action_phrase = self._mechanism_action_phrase(relationship)
+        normalized_target = self._normalize_target_label(target_entity) or target_entity
 
         if self._is_mechanism_evidence_item(item):
-            mechanism_text = mechanism or snippet or target_entity
+            mechanism_text = mechanism
+            if (
+                mechanism_text
+                and action_phrase
+                and normalized_target
+                and "fusion" in mechanism_text.lower()
+                and self._has_independent_target_support(item, evidence_items)
+            ):
+                mechanism_text = f"{action_phrase} {normalized_target}"
+            elif not mechanism_text and action_phrase and normalized_target:
+                mechanism_text = f"{action_phrase} {normalized_target}"
+            if not mechanism_text:
+                mechanism_text = snippet or normalized_target
             if mechanism_text:
                 return f"{source_entity} mechanism: {mechanism_text}"
         if self._is_target_evidence_item(item) and source_entity and target_entity:
             return f"{source_entity} targets {target_entity}."
         if "mechanism" in relationship and source_entity and target_entity:
             return f"{source_entity} mechanism involves {target_entity}"
+        return ""
+
+    def _has_independent_target_support(self, item: Any, evidence_items) -> bool:
+        if not evidence_items:
+            return False
+
+        target_key = self._canonical_target_key(self._extract_target_label(item))
+        current_source = str(getattr(item, "source_skill", "")).strip()
+        if not target_key:
+            return False
+
+        for other in evidence_items:
+            if other is item or not self._is_target_evidence_item(other):
+                continue
+            other_key = self._canonical_target_key(self._extract_target_label(other))
+            if other_key != target_key:
+                continue
+            other_source = str(getattr(other, "source_skill", "")).strip()
+            if other_source != current_source or not self._is_mechanism_evidence_item(other):
+                return True
+        return False
+
+    @staticmethod
+    def _mechanism_action_phrase(relationship: str) -> str:
+        normalized = str(relationship or "").strip().lower()
+        if "inhib" in normalized or "block" in normalized:
+            return "inhibits"
+        if "antagon" in normalized:
+            return "antagonizes"
+        if "agon" in normalized:
+            return "agonizes"
+        if "activat" in normalized:
+            return "activates"
+        if "modulat" in normalized:
+            return "modulates"
+        if "substr" in normalized:
+            return "has substrate activity at"
         return ""
 
     def _pgx_claim_for_item(self, item: Any) -> str:
@@ -1151,9 +2213,43 @@ Formatting requirements:
         source_entity = str(item.metadata.get("source_entity", "")).strip()
         target_entity = str(item.metadata.get("target_entity", "")).strip()
         relationship = str(item.metadata.get("relationship", "")).strip().lower()
-        if relationship == "causes_adverse_event" and source_entity and target_entity:
+        if relationship in {
+            "causes_adverse_event",
+            "classified_adr",
+            "has_side_effect",
+            "associated_with_adverse_event",
+        } and source_entity and target_entity:
             return f"{source_entity} serious safety signal: {target_entity}"
         return ""
+
+    @staticmethod
+    def _adr_item_priority(item: Any) -> tuple[int, int, float]:
+        source_skill = str(getattr(item, "source_skill", "")).strip().lower()
+        target_entity = str(item.metadata.get("target_entity", "")).strip().upper()
+        priority = 0
+        severe_terms = {
+            "AGRANULOCYTOSIS": 5,
+            "SEVERE NEUTROPENIA": 5,
+            "NEUTROPENIA": 4,
+            "GRANULOCYTOPENIA": 4,
+            "LEUKOPENIA": 4,
+            "MYOCARDITIS": 4,
+            "CARDIOMYOPATHY": 4,
+            "PERICARDITIS": 4,
+            "SEIZURE": 4,
+            "MYELOSUPPRESSION": 4,
+            "CONSTIPATION": 2,
+        }
+        for term, score in severe_terms.items():
+            if term in target_entity:
+                priority = max(priority, score)
+        source_priority = (
+            2 if source_skill in {"adrecs", "sider", "nsides"}
+            else 1 if source_skill in {"openfda human drug", "dailymed"}
+            else 0
+        )
+        retrieval_score = float(getattr(item, "retrieval_score", 0.0) or 0.0)
+        return (priority, source_priority, retrieval_score)
 
     @staticmethod
     def _looks_like_compound_identifier(value: str) -> bool:
@@ -1179,6 +2275,11 @@ Formatting requirements:
             return ""
         cleaned = re.sub(r"^\d+(?:\.\d+)?\s+[A-Z][A-Z\s/&-]{3,40}\s+", "", cleaned)
         cleaned = re.sub(r"^\d+(?:\.\d+)?\s+[A-Z][a-zA-Z\s/&-]{3,40}\s+", "", cleaned)
+        for pattern, replacement in (
+            (r"\bLactaton\b", "Lactation"),
+            (r"\bdoage\b", "dosage"),
+        ):
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
         return cleaned.strip()
 
     @staticmethod
@@ -1216,6 +2317,55 @@ Formatting requirements:
                 )
             )
         return sorted(summaries, key=lambda summary: summary.confidence, reverse=True)
+
+    def _summarize_labeling_claims(
+        self,
+        evidence_items,
+        assessments: List[ClaimAssessment],
+    ) -> List[ClaimSummary]:
+        grouped: Dict[str, List[Any]] = defaultdict(list)
+        for item in evidence_items:
+            grouped[item.claim].append(item)
+
+        assessment_by_claim = {assessment.claim: assessment for assessment in assessments}
+        ranked_records: List[tuple[ClaimSummary, str, tuple[int, int, float, float]]] = []
+        for claim, items in grouped.items():
+            assessment = assessment_by_claim.get(claim)
+            confidence = (
+                assessment.confidence if assessment is not None
+                else score_claim_confidence(items)
+            )
+            citations = [
+                f"[{item.evidence_id}] {item.source_skill} ({item.source_locator})"
+                for item in items
+            ]
+            evidence_ids = (
+                assessment.supporting_evidence_ids + assessment.contradicting_evidence_ids
+                if assessment is not None
+                else [item.evidence_id for item in items]
+            )
+            summary = ClaimSummary(
+                claim=claim,
+                confidence=confidence,
+                evidence_ids=evidence_ids,
+                citations=citations,
+            )
+            representative = max(items, key=self._labeling_item_priority)
+            relationship = str(representative.metadata.get("relationship", "")).strip().lower()
+            priority = (*self._labeling_item_priority(representative), confidence)
+            ranked_records.append((summary, relationship, priority))
+
+        ranked_records.sort(key=lambda record: record[2], reverse=True)
+        diversified: List[ClaimSummary] = []
+        overflow: List[ClaimSummary] = []
+        seen_relationships = set()
+        for summary, relationship, _ in ranked_records:
+            if relationship and relationship not in seen_relationships:
+                seen_relationships.add(relationship)
+                diversified.append(summary)
+            else:
+                overflow.append(summary)
+        return diversified + overflow
 
     def _summarize_target_claims(
         self,
@@ -1400,6 +2550,8 @@ Formatting requirements:
         query_type: str,
         evidence_items,
         claims: List[ClaimSummary],
+        *,
+        primary_drug: str = "",
     ) -> tuple[str, Dict[str, Any]]:
         normalized_task_type = normalize_task_type(query_type)
 
@@ -1412,9 +2564,15 @@ Formatting requirements:
             return "honest_gap", diagnostics
 
         if normalized_task_type == "repurposing_evidence":
-            sections, diagnostics = self._partition_repurposing_items(evidence_items)
-            if sections["repurposing_evidence"]:
+            sections, diagnostics = self._repurposing_answer_sections(primary_drug, evidence_items)
+            if (
+                sections["repurposing_evidence"]
+                and diagnostics["strong_record_count"] > 0
+                and diagnostics["strong_record_count"] == len(sections["repurposing_evidence"])
+            ):
                 return "strong_answer", diagnostics
+            if sections["repurposing_evidence"]:
+                return "partial_with_weak_support", diagnostics
             if evidence_items:
                 return "partial_with_weak_support", diagnostics
             return "honest_gap", diagnostics
@@ -1494,10 +2652,29 @@ Formatting requirements:
         relationship = str(item.metadata.get("relationship", "")).lower()
         structured_payload = getattr(item, "structured_payload", {}) or {}
         metadata = getattr(item, "metadata", {}) or {}
+        target_entity = str(metadata.get("target_entity", "")).strip()
+        target_type = str(metadata.get("target_type", "")).lower()
+        has_action_relationship = bool(
+            target_entity
+            and target_type not in {"cell_line", "disease", "drug_info", "disease_info", "unknown", "label_section"}
+            and any(
+                marker in relationship
+                for marker in (
+                    "inhib",
+                    "agon",
+                    "antagon",
+                    "substr",
+                    "modulat",
+                    "block",
+                    "activat",
+                )
+            )
+        )
         return bool(
             "mechanism" in relationship
             or structured_payload.get("mechanism_of_action")
             or metadata.get("mechanism_of_action")
+            or has_action_relationship
         )
 
     @staticmethod
@@ -1551,8 +2728,10 @@ Formatting requirements:
             "supporting_signals": [],
         }
         diagnostics: Dict[str, Any] = {
-            "strong_sources_attempted": ["RepoDB", "DrugCentral", "DrugBank"],
+            "strong_sources_attempted": ["RepoDB", "DrugCentral", "DrugBank", "DrugRepoBank"],
+            "exploratory_repurposing_sources_attempted": ["RepurposeDrugs", "OREGANO"],
             "strong_record_count": 0,
+            "strong_approved_indication_count": 0,
             "secondary_official_support_count": 0,
             "weak_support_count": 0,
         }
@@ -1566,8 +2745,18 @@ Formatting requirements:
             else:
                 sections["supporting_signals"].append(item)
 
-            if classification.tier == "strong_structured":
+            if (
+                classification.tier == "strong_structured"
+                and classification.slot == "repurposing_evidence"
+            ):
                 diagnostics["strong_record_count"] += 1
+            elif classification.slot == "approved_indications" and classification.tier in {
+                "strong_structured",
+                "secondary_official_support",
+            }:
+                diagnostics["strong_approved_indication_count"] += 1
+                if classification.tier == "secondary_official_support":
+                    diagnostics["secondary_official_support_count"] += 1
             elif classification.tier == "secondary_official_support":
                 diagnostics["secondary_official_support_count"] += 1
             else:
@@ -1580,6 +2769,19 @@ Formatting requirements:
             diagnostics["secondary_official_support_count"] > 0
             or diagnostics["weak_support_count"] > 0
         )
+        return sections, diagnostics
+
+    def _repurposing_answer_sections(
+        self,
+        primary_drug: str,
+        evidence_items,
+    ) -> tuple[Dict[str, List[Any]], Dict[str, Any]]:
+        sections, diagnostics = self._partition_repurposing_items(evidence_items)
+        sections["approved_indications"] = self._filter_repurposing_approved_indication_items(
+            primary_drug,
+            sections["approved_indications"],
+        )
+        diagnostics["approved_indication_record_count"] = len(sections["approved_indications"])
         return sections, diagnostics
 
     @staticmethod
@@ -1620,6 +2822,65 @@ Formatting requirements:
             else []
         )
         return target_items, mechanism_items, target_claims, mechanism_claims
+
+    def _prioritized_mechanism_claims(
+        self,
+        target_items,
+        mechanism_claims: List[ClaimSummary],
+    ) -> List[ClaimSummary]:
+        if not mechanism_claims:
+            return []
+
+        direct_sections, _ = self._partition_direct_target_items(target_items)
+        established_keys = {
+            self._canonical_target_key(self._extract_target_label(item))
+            for item in direct_sections["established_direct_targets"]
+            if self._extract_target_label(item)
+        }
+        if not established_keys:
+            return self._dedupe_claims_by_target_key(mechanism_claims)
+
+        prioritized = [
+            claim
+            for claim in mechanism_claims
+            if self._mechanism_claim_target_key(claim.claim) in established_keys
+        ]
+        return self._dedupe_claims_by_target_key(prioritized)
+
+    def _dedupe_claims_by_target_key(
+        self,
+        claims: List[ClaimSummary],
+    ) -> List[ClaimSummary]:
+        deduped: List[ClaimSummary] = []
+        seen_keys = set()
+        for claim in claims:
+            key = self._mechanism_claim_target_key(claim.claim) or claim.claim.strip().lower()
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped.append(claim)
+        return deduped
+
+    def _primary_answer_fragments(
+        self,
+        task_type: str,
+        claims: List[ClaimSummary],
+    ) -> List[str]:
+        normalized_task_type = normalize_task_type(task_type)
+        fragments: List[str] = []
+        seen_keys = set()
+        for claim in claims:
+            fragment = self._claim_to_target_fragment(claim.claim)
+            key = (
+                self._mechanism_claim_target_key(claim.claim)
+                if normalized_task_type == "mechanism_of_action"
+                else fragment.strip().lower()
+            )
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            fragments.append(fragment)
+        return fragments
 
     @staticmethod
     def _format_item_lines(items, empty_message: str, limit: int = 5) -> List[str]:
@@ -1668,12 +2929,16 @@ Formatting requirements:
     ) -> List[str]:
         sections, _ = self._partition_direct_target_items(evidence_items)
         established_items = sections["established_direct_targets"]
-        association_items = sections["association_only_signals"]
-        association_keys = {
+        promotion_keys = {
             self._canonical_target_key(self._extract_target_label(item))
-            for item in association_items
+            for item in sections["association_only_signals"]
             if self._extract_target_label(item)
         }
+        association_items = self._visible_association_only_items(
+            evidence_items,
+            established_items,
+            sections["association_only_signals"],
+        )
         ranked_established_groups = (
             self._rank_target_group_summaries(
                 query,
@@ -1694,7 +2959,7 @@ Formatting requirements:
         additional_direct_activity_groups = sorted(
             additional_direct_activity_groups,
             key=lambda group: (
-                0 if group["canonical_key"] in association_keys else 1,
+                0 if group["canonical_key"] in promotion_keys else 1,
                 group["ranking_key"],
             ),
         )
@@ -1742,6 +3007,103 @@ Formatting requirements:
         )
         return lines
 
+    def _visible_association_only_items(
+        self,
+        target_items,
+        established_items,
+        association_items,
+    ) -> List[Any]:
+        established_keys = {
+            self._canonical_target_key(self._extract_target_label(item))
+            for item in established_items
+            if self._extract_target_label(item)
+        }
+        visible: List[Any] = []
+        for item in association_items:
+            target_label = self._extract_target_label(item)
+            canonical_key = self._canonical_target_key(target_label)
+            if canonical_key and canonical_key in established_keys:
+                continue
+            if self._is_low_value_open_targets_alias_signal(item, target_items):
+                continue
+            if self._is_fusion_component_only_signal(item, target_items):
+                continue
+            visible.append(item)
+        return visible
+
+    def _is_low_value_open_targets_alias_signal(self, item: Any, target_items) -> bool:
+        source_skill = str(getattr(item, "source_skill", "")).strip()
+        if source_skill != "Open Targets Platform":
+            return False
+
+        raw_label = self._extract_target_label(item)
+        normalized_label = self._normalize_target_label(raw_label)
+        if not raw_label or not normalized_label or raw_label.strip() == normalized_label:
+            return False
+        if not self._looks_like_target_symbol(normalized_label):
+            return False
+
+        lowered_label = raw_label.lower()
+        if not any(marker in lowered_label for marker in ("activator of", "regulator of", "associated protein")):
+            return False
+
+        canonical_key = self._canonical_target_key(raw_label)
+        for other in target_items:
+            if other is item:
+                continue
+            other_key = self._canonical_target_key(self._extract_target_label(other))
+            if other_key != canonical_key:
+                continue
+            if str(getattr(other, "source_skill", "")).strip() != "Open Targets Platform":
+                return False
+        return True
+
+    def _is_fusion_component_only_signal(self, item: Any, target_items) -> bool:
+        source_skill = str(getattr(item, "source_skill", "")).strip()
+        if source_skill != "Open Targets Platform":
+            return False
+
+        mechanism_text = " ".join(
+            part
+            for part in (
+                str(getattr(item, "snippet", "") or "").strip(),
+                str((getattr(item, "structured_payload", {}) or {}).get("mechanism_of_action") or "").strip(),
+                str((getattr(item, "metadata", {}) or {}).get("mechanism_of_action") or "").strip(),
+            )
+            if part
+        ).strip()
+        fusion_component_keys = self._fusion_component_target_keys(mechanism_text)
+        if not fusion_component_keys:
+            return False
+
+        canonical_key = self._canonical_target_key(self._extract_target_label(item))
+        if canonical_key not in fusion_component_keys:
+            return False
+
+        for other in target_items:
+            if other is item:
+                continue
+            other_key = self._canonical_target_key(self._extract_target_label(other))
+            if other_key != canonical_key:
+                continue
+            if str(getattr(other, "source_skill", "")).strip() != "Open Targets Platform":
+                return False
+        return True
+
+    def _fusion_component_target_keys(self, mechanism_text: str) -> set[str]:
+        lowered = str(mechanism_text or "").strip().lower()
+        if "fusion" not in lowered:
+            return set()
+
+        prefix = lowered.split("fusion", 1)[0]
+        tokens = re.findall(r"[a-z0-9-]{2,}", prefix)
+        component_keys = {
+            self._canonical_target_key(token)
+            for token in tokens
+            if token not in {"protein", "kinase", "receptor", "stem", "cell", "growth", "factor", "inhibitor"}
+        }
+        return {key for key in component_keys if key}
+
     def _build_mechanism_section_lines(
         self,
         query: str,
@@ -1751,11 +3113,12 @@ Formatting requirements:
         title_case: bool = False,
         include_targets: bool = True,
     ) -> List[str]:
-        _, _, target_claims, mechanism_claims = self._mechanism_claim_groups(
+        target_items, _, target_claims, mechanism_claims = self._mechanism_claim_groups(
             query,
             evidence_items,
             assessments,
         )
+        mechanism_claims = self._prioritized_mechanism_claims(target_items, mechanism_claims)
 
         target_heading = "Targets Supported:" if title_case else "Targets supported:"
         mechanism_heading = "Mechanism Coverage:" if title_case else "Mechanism coverage:"
@@ -1818,6 +3181,7 @@ Formatting requirements:
     def _render_composite_answer(
         self,
         query: str,
+        primary_drug: str,
         evidence_items,
         assessments: List[ClaimAssessment],
         primary_task_type: str,
@@ -1828,38 +3192,97 @@ Formatting requirements:
     ) -> str:
         lines = [f"Query: {query}", "", "Short Answer:"]
 
+        primary_items = self._filter_items_for_task_type(
+            primary_task_type,
+            query=query,
+            primary_drug=primary_drug,
+            evidence_items=evidence_items,
+        )
+        primary_query_type = legacy_question_type_for_task_type(primary_task_type)
+        if primary_query_type not in {"direct_targets", "target_profile"}:
+            self._semanticize_claims_for_query_type(primary_query_type, primary_items)
+        primary_assessments = self._subset_assessments_for_items(assessments, primary_items)
+        if not primary_assessments and primary_items:
+            primary_assessments = assess_claims(primary_items)
         primary_claims = self._composite_primary_claims(
             query,
+            primary_drug,
             primary_task_type,
-            evidence_items,
-            assessments,
+            primary_items,
+            primary_assessments,
         )
         if primary_claims:
-            primary_labels = ", ".join(
-                self._claim_to_target_fragment(claim.claim)
-                for claim in primary_claims[:3]
-            )
+            primary_fragments = self._primary_answer_fragments(primary_task_type, primary_claims)
+            primary_labels = ", ".join(primary_fragments[:3])
             lines.append(f"- Primary supported answer: {primary_labels}")
         else:
             lines.append("- Structured evidence is available, but the primary answer remains incomplete.")
 
         task_order = [primary_task_type] + list(supporting_task_types)
         for task_type in task_order:
+            task_items = self._filter_items_for_task_type(
+                task_type,
+                query=query,
+                primary_drug=primary_drug,
+                evidence_items=evidence_items,
+            )
+            task_query_type = legacy_question_type_for_task_type(task_type)
+            if task_type == "labeling_summary" and primary_task_type == "repurposing_evidence":
+                task_query_type = "drug_repurposing"
+            if task_query_type not in {"direct_targets", "target_profile"}:
+                self._semanticize_claims_for_query_type(task_query_type, task_items)
+            task_assessments = (
+                primary_assessments
+                if task_type == primary_task_type
+                else self._subset_assessments_for_items(assessments, task_items)
+            )
+            if not task_assessments and task_items:
+                task_assessments = assess_claims(task_items)
+            if task_type != primary_task_type and not task_items:
+                continue
+
             lines.append("")
             if task_type == "direct_targets":
-                lines.extend(self._build_direct_targets_section_lines(query, evidence_items, assessments))
+                lines.extend(self._build_direct_targets_section_lines(query, task_items, task_assessments))
             elif task_type == "mechanism_of_action":
                 lines.extend(
                     self._build_mechanism_section_lines(
                         query,
-                        evidence_items,
-                        assessments,
+                        task_items,
+                        task_assessments,
                         title_case=True,
                         include_targets=False,
                     )
                 )
+            elif task_type == "repurposing_evidence":
+                sections, _ = self._repurposing_answer_sections(primary_drug, task_items)
+                repurposing_items = sections["repurposing_evidence"]
+                repurposing_claims = self._summarize_claims(
+                    repurposing_items,
+                    self._subset_assessments_for_items(task_assessments, repurposing_items),
+                )
+                lines.append("Repurposing Evidence:")
+                lines.extend(
+                    self._format_claim_lines(
+                        repurposing_claims,
+                        "No repurposing evidence was retrieved.",
+                    )
+                )
+            elif task_type == "labeling_summary" and primary_task_type == "repurposing_evidence":
+                sections, _ = self._repurposing_answer_sections(primary_drug, task_items)
+                lines.append("Labeling Summary:")
+                lines.extend(
+                    self._format_item_lines(
+                        sections["approved_indications"],
+                        "No approved-indication evidence was retrieved.",
+                    )
+                )
             else:
-                task_claims = self._summarize_claims(evidence_items, assessments)
+                task_claims = (
+                    self._summarize_labeling_claims(task_items, task_assessments)
+                    if task_type == "labeling_summary"
+                    else self._summarize_claims(task_items, task_assessments)
+                )
                 lines.append(f"{task_type.replace('_', ' ').title()}:")
                 lines.extend(
                     self._format_claim_lines(
@@ -1886,16 +3309,21 @@ Formatting requirements:
     def _render_repurposing_answer(
         self,
         query: str,
+        primary_drug: str,
         evidence_items,
         warnings: List[str],
         limitations: List[str],
         web_section: tuple[str, List[str]],
     ) -> str:
-        sections, _ = self._partition_repurposing_items(evidence_items)
+        sections, diagnostics = self._repurposing_answer_sections(primary_drug, evidence_items)
+        approved_claims = self._summarize_repurposing_approved_indication_claims(
+            primary_drug,
+            sections["approved_indications"],
+        )
         lines = [f"Query: {query}", "", "Approved indications:"]
         lines.extend(
-            self._format_item_lines(
-                sections["approved_indications"],
+            self._format_claim_lines(
+                approved_claims,
                 "No approved-indication evidence was retrieved.",
             )
         )
@@ -1919,7 +3347,11 @@ Formatting requirements:
         coverage_gaps: List[str] = []
         if not sections["repurposing_evidence"]:
             coverage_gaps.append(
-                "RepoDB-style strong repurposing rows were not retrieved, so the answer cannot claim strong repurposing support."
+                "Curated repurposing rows were not retrieved, so the answer cannot claim strong repurposing support."
+            )
+        elif diagnostics["strong_record_count"] == 0:
+            coverage_gaps.append(
+                "Retrieved repurposing signals were exploratory or lower-confidence, so they should not be treated as established repurposing evidence."
             )
         if not sections["approved_indications"]:
             coverage_gaps.append(
@@ -1943,6 +3375,13 @@ Formatting requirements:
             lines.extend(f"- {limitation}" for limitation in limitations)
 
         return "\n".join(lines)
+
+    def _filter_repurposing_approved_indication_items(
+        self,
+        primary_drug: str,
+        items,
+    ) -> List[Any]:
+        return self._dedupe_repurposing_approved_indication_items(primary_drug, items)
 
     def _render_mechanism_answer(
         self,
@@ -2089,11 +3528,25 @@ Formatting requirements:
     @staticmethod
     def _claim_to_target_fragment(claim: str) -> str:
         text = str(claim or "").strip().rstrip(".")
+        if " interacts with " in text:
+            return text
         if " targets " in text:
             return text.split(" targets ", 1)[1].strip()
         if ": " in text:
             return text.split(": ", 1)[1].strip()
         return text
+
+    @classmethod
+    def _mechanism_claim_target_key(cls, claim: str) -> str:
+        fragment = cls._claim_to_target_fragment(claim)
+        normalized = re.sub(
+            r"^(?:inhibits|agonizes|antagonizes|activates|modulates|targets|has substrate activity at|mechanism involves)\s+",
+            "",
+            fragment,
+            flags=re.IGNORECASE,
+        ).strip()
+        normalized = normalized.split("(", 1)[0].strip()
+        return cls._canonical_target_key(normalized or fragment)
 
     @staticmethod
     def _extract_target_label(item: Any) -> str:
@@ -2276,7 +3729,7 @@ Formatting requirements:
         if not normalized_claims:
             return []
         if len(normalized_claims) == 1:
-            return [f"{singular_prefix}: {normalized_claims[0]}"]
+            return [f"{singular_prefix}."]
 
         examples = normalized_claims[:max_examples]
         summary = f"{plural_prefix} ({len(normalized_claims)} claims)."

@@ -95,6 +95,45 @@ def test_wrap_answer_card_truncates_long_source_list() -> None:
     assert "Showing 6 of 8 sources; 2 more omitted." in formatted
 
 
+def test_wrap_answer_card_prefers_structured_web_citations_over_raw_web_results() -> None:
+    result = {
+        "query": "What are the approved indications and repurposing evidence of metformin?",
+        "mode": "simple",
+        "iterations": 0,
+        "evidence_graph_size": 0,
+        "final_reward": 0.0,
+        "resource_filter": [],
+        "retrieved_content": [],
+        "web_search_results": [
+            {
+                "source": "PubMed",
+                "title": "Therapeutic effects of metformin on cocaine conditioned place preference and locomotion",
+                "url": "https://pubmed.ncbi.nlm.nih.gov/40000001/",
+            },
+            {
+                "source": "PubMed",
+                "title": "Metformin repurposing for ovarian cancer",
+                "url": "https://pubmed.ncbi.nlm.nih.gov/40000002/",
+            },
+        ],
+        "final_answer_structured": {
+            "summary_confidence": 0.59,
+            "task_type": "drug_repurposing",
+            "final_outcome": "partial_with_weak_support",
+            "key_claims": [],
+            "evidence_items": [],
+            "citations": ["[web:PubMed] https://pubmed.ncbi.nlm.nih.gov/40000002/"],
+            "limitations": [],
+            "warnings": [],
+        },
+    }
+
+    formatted = wrap_answer_card("Metformin answer", result)
+
+    assert "https://pubmed.ncbi.nlm.nih.gov/40000002/" in formatted
+    assert "cocaine conditioned place preference" not in formatted.lower()
+
+
 def test_wrap_answer_card_collapses_duplicate_evidence_rows() -> None:
     result = {
         "query": "What prescribing and safety information is available for metformin?",
@@ -261,3 +300,38 @@ def test_wrap_answer_card_groups_target_lookup_evidence_by_claim() -> None:
     assert "| 1 | BindingDB, ChEMBL | imatinib | targets | KIT | 0.84 | bindingdb:2, chembl:6 |" in formatted
     assert "| 2 | BindingDB | imatinib | targets | ABL1 | 0.83 | bindingdb:1, chembl:1 |" in formatted
     assert "Mast/stem cell growth factor receptor Kit" not in formatted
+
+
+def test_wrap_answer_card_places_answer_before_metadata_summary() -> None:
+    result = {
+        "query": "What are the known drug targets and mechanism of action of imatinib?",
+        "mode": "simple",
+        "iterations": 0,
+        "evidence_graph_size": 0,
+        "final_reward": 0.0,
+        "resource_filter": [],
+        "retrieved_content": [],
+        "final_answer_structured": {
+            "summary_confidence": 0.79,
+            "task_type": "composite_query",
+            "final_outcome": "strong_answer",
+            "diagnostics": {
+                "target_support_count": 36,
+                "mechanism_support_count": 4,
+            },
+            "key_claims": [],
+            "evidence_items": [],
+            "citations": [],
+            "limitations": [],
+            "warnings": [],
+        },
+    }
+
+    formatted = wrap_answer_card(
+        "Short Answer:\n- Primary supported answer: inhibits ABL1, inhibits KIT, inhibits PDGFRB",
+        result,
+    )
+
+    assert formatted.index("## Answer") < formatted.index("Short Answer:")
+    assert formatted.index("Short Answer:") < formatted.index("## Run Metadata")
+    assert formatted.index("## Run Metadata") < formatted.index("**Query**")

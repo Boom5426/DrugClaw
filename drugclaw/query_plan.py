@@ -783,6 +783,12 @@ def _query_flags(query: str) -> Dict[str, bool]:
                 "labeling",
                 "label information",
                 "patient guidance",
+                "monitor",
+                "monitoring",
+                "special population",
+                "special populations",
+                "use in specific populations",
+                "renal function",
             )
         ),
         "adr": any(
@@ -837,11 +843,27 @@ def infer_task_type_from_query(query: str) -> str:
 
 def _plan_shape_from_query(query: str) -> tuple[str, str, List[str]]:
     flags = _query_flags(query)
+    lowered = str(query or "").strip().lower()
 
     if flags["ddi"] and flags["mechanism"]:
         return "composite_query", "clinically_relevant_ddi", ["ddi_mechanism"]
     if flags["targets"] and flags["mechanism"]:
         return "composite_query", "direct_targets", ["mechanism_of_action"]
+    if flags["adr"] and (
+        flags["labeling"]
+        or any(
+            marker in lowered
+            for marker in (
+                "major safety",
+                "serious adverse",
+                "serious adverse reaction",
+                "serious adverse reactions",
+                "safety risk",
+                "safety risks",
+            )
+        )
+    ):
+        return "composite_query", "major_adrs", ["labeling_summary"]
 
     primary_task_type = infer_task_type_from_query(query)
     return "single_task", primary_task_type, []

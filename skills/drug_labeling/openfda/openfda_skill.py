@@ -24,9 +24,14 @@ _BASE = "https://api.fda.gov/drug/label.json"
 _FIELDS = [
     ("adverse_reactions", "has_adverse_reaction"),
     ("indications_and_usage", "indicated_for"),
+    ("boxed_warning", "has_warning"),
     ("warnings", "has_warning"),
+    ("warnings_and_precautions", "has_warning"),
+    ("contraindications", "has_contraindication"),
     ("mechanism_of_action", "has_mechanism"),
     ("drug_interactions", "interacts_with"),
+    ("use_in_specific_populations", "use_in_special_population"),
+    ("dosage_and_administration", "has_dosing_guidance"),
 ]
 _OFFLINE_FIXTURES = {
     "metformin": {
@@ -43,13 +48,65 @@ _OFFLINE_FIXTURES = {
                 "Postmarketing cases of metformin-associated lactic acidosis have been reported; assess renal function and risk factors before use.",
             ),
             (
+                "contraindications",
+                "has_contraindication",
+                "Metformin is contraindicated in patients with severe renal impairment and in acute or chronic metabolic acidosis.",
+            ),
+            (
                 "adverse_reactions",
                 "has_adverse_reaction",
                 "Common adverse reactions include diarrhea, nausea, vomiting, flatulence, and abdominal discomfort.",
             ),
+            (
+                "use_in_specific_populations",
+                "use_in_special_population",
+                "Assess renal function more frequently in older adults and other patients at risk for lactic acidosis.",
+            ),
+            (
+                "drug_interactions",
+                "interacts_with",
+                "Carbonic anhydrase inhibitors and other drugs that impair renal function may increase the risk of lactic acidosis; monitor patients closely.",
+            ),
         ],
     }
 }
+
+
+def _normalize_string_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _is_combination_product(*, brand_name: str, generic_names: List[str]) -> bool:
+    candidate_text = [brand_name] + list(generic_names)
+    normalized_candidates = [text.lower() for text in candidate_text if text]
+    if len(generic_names) > 1:
+        return True
+    return any(
+        separator in text
+        for text in normalized_candidates
+        for separator in (" and ", "/", ";", ",")
+    )
+
+
+def _truncate_label_text(text: Any, limit: int = 500) -> str:
+    normalized = str(text or "")
+    if len(normalized) <= limit:
+        return normalized
+
+    clipped = normalized[:limit]
+    if (
+        limit < len(normalized)
+        and clipped
+        and not clipped[-1].isspace()
+        and not normalized[limit].isspace()
+    ):
+        last_space = clipped.rfind(" ")
+        if last_space > 0:
+            clipped = clipped[:last_space]
+    return clipped.rstrip()
 
 
 class OpenFDASkill(RAGSkill):
@@ -100,12 +157,27 @@ class OpenFDASkill(RAGSkill):
 
         results: List[RetrievalResult] = []
         for label in data.get("results", [])[:limit]:
-            brand_name = label.get("openfda", {}).get("brand_name", [drug])[0]
+            openfda_payload = label.get("openfda", {}) or {}
+            brand_names = _normalize_string_list(openfda_payload.get("brand_name", [drug]))
+            brand_name = brand_names[0] if brand_names else drug
+            generic_names = _normalize_string_list(openfda_payload.get("generic_name", []))
+            product_types = _normalize_string_list(openfda_payload.get("product_type", []))
+            identity_metadata = {
+                "queried_drug": drug.strip().lower(),
+                "brand_name": brand_name,
+                "generic_names": generic_names,
+                "is_combination_product": _is_combination_product(
+                    brand_name=brand_name,
+                    generic_names=generic_names,
+                ),
+                "openfda_product_type": product_types[0] if product_types else "",
+            }
             for field, relationship in _FIELDS:
                 text_list = label.get(field, [])
                 if not text_list:
                     continue
-                text = text_list[0][:500] if isinstance(text_list, list) else str(text_list)[:500]
+                raw_text = text_list[0] if isinstance(text_list, list) else text_list
+                text = _truncate_label_text(raw_text)
                 results.append(RetrievalResult(
                     source_entity=brand_name,
                     source_type="drug",
@@ -116,7 +188,10 @@ class OpenFDASkill(RAGSkill):
                     source="openFDA Human Drug",
                     skill_category="drug_labeling",
                     evidence_text=text,
-                    metadata={"field": field},
+                    metadata={
+                        "field": field,
+                        **identity_metadata,
+                    },
                 ))
         return results or self._offline_results(drug, limit)
 
@@ -140,6 +215,11 @@ class OpenFDASkill(RAGSkill):
                 evidence_text=text,
                 metadata={
                     "field": field,
+                    "queried_drug": drug.strip().lower(),
+                    "brand_name": brand_name,
+                    "generic_names": [brand_name.lower()],
+                    "is_combination_product": False,
+                    "openfda_product_type": "",
                     "offline_fallback": True,
                 },
             ))

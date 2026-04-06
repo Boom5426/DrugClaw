@@ -12,6 +12,7 @@ from .query_plan import (
     is_direct_target_lookup,
     is_supported_question_type,
     normalize_question_type,
+    normalize_task_type,
     prioritize_target_lookup_skills,
 )
 
@@ -249,7 +250,7 @@ Rules:
                 question_type=fallback.question_type,
                 entities=entities or fallback.entities,
                 subquestions=promoted_subquestions,
-                preferred_skills=[],
+                preferred_skills=list(fallback.preferred_skills),
                 preferred_evidence_types=self._normalize_list(
                     payload.get("preferred_evidence_types")
                 ),
@@ -305,13 +306,49 @@ Rules:
         ).strip()
 
         supporting_tasks = []
-        seen_task_types = {primary_task_type} if primary_task_type else set()
+        allowed_task_types = self._allowed_task_types_for_query(query, fallback=fallback)
+        allowed_supporting_task_types = self._allowed_supporting_task_types(
+            question_type=candidate.question_type,
+            primary_task_type=primary_task_type,
+        )
+        normalized_primary_task_type = normalize_task_type(primary_task_type)
+        if (
+            allowed_task_types
+            and normalized_primary_task_type != "unknown"
+            and normalized_primary_task_type not in allowed_task_types
+        ):
+            primary_task = (
+                fallback.primary_task.to_dict()
+                if getattr(fallback, "primary_task", None) is not None
+                else primary_task
+            )
+            primary_task_type = str(
+                getattr(getattr(fallback, "primary_task", None), "task_type", "") or primary_task_type
+            ).strip()
+            normalized_primary_task_type = normalize_task_type(primary_task_type)
+
+        seen_task_types = (
+            {normalized_primary_task_type}
+            if normalized_primary_task_type and normalized_primary_task_type != "unknown"
+            else set()
+        )
         for task in list(getattr(candidate, "supporting_tasks", []) or []):
-            task_type = str(getattr(task, "task_type", "") or "").strip()
-            if not task_type or task_type == "unknown" or task_type in seen_task_types:
+            task_type = normalize_task_type(str(getattr(task, "task_type", "") or "").strip())
+            if (
+                not task_type
+                or task_type == "unknown"
+                or task_type in seen_task_types
+                or (allowed_task_types and task_type not in allowed_task_types)
+                or (
+                    allowed_supporting_task_types is not None
+                    and task_type not in allowed_supporting_task_types
+                )
+            ):
                 continue
             seen_task_types.add(task_type)
-            supporting_tasks.append(task.to_dict() if hasattr(task, "to_dict") else task)
+            task_payload = task.to_dict() if hasattr(task, "to_dict") else task
+            task_payload["task_type"] = task_type
+            supporting_tasks.append(task_payload)
 
         if is_direct_target_lookup(query=query, question_type=candidate.question_type):
             primary_task = (
@@ -323,6 +360,26 @@ Rules:
                 primary_task["entities"] = dict(candidate.entities or fallback.entities)
             supporting_tasks = []
 
+        fallback_primary_task_type = str(
+            getattr(getattr(fallback, "primary_task", None), "task_type", "") or ""
+        ).strip()
+        if (
+            fallback.plan_type == "composite_query"
+            and not supporting_tasks
+            and (
+                primary_task_type == fallback_primary_task_type
+                or normalize_task_type(candidate.question_type) == fallback_primary_task_type
+            )
+        ):
+            if primary_task is None and getattr(fallback, "primary_task", None) is not None:
+                primary_task = fallback.primary_task.to_dict()
+            if primary_task is not None:
+                primary_task["entities"] = dict(candidate.entities or fallback.entities)
+            for task in fallback.supporting_tasks:
+                task_payload = task.to_dict()
+                task_payload["entities"] = dict(candidate.entities or fallback.entities)
+                supporting_tasks.append(task_payload)
+
         plan_type = "composite_query" if supporting_tasks else "single_task"
         answer_contract = (
             candidate.answer_contract.to_dict()
@@ -330,6 +387,8 @@ Rules:
             else None
         )
         if plan_type == "single_task" and getattr(fallback, "answer_contract", None) is not None:
+            answer_contract = fallback.answer_contract.to_dict()
+        if plan_type == "composite_query" and getattr(fallback, "answer_contract", None) is not None:
             answer_contract = fallback.answer_contract.to_dict()
 
         preferred_skills = list(candidate.preferred_skills)
@@ -359,6 +418,45 @@ Rules:
         )
 
     @staticmethod
+    def _allowed_supporting_task_types(
+        *,
+        question_type: str,
+        primary_task_type: str,
+    ) -> set[str] | None:
+        normalized_question_type = normalize_question_type(question_type)
+        normalized_primary_task_type = normalize_task_type(primary_task_type)
+
+        if normalized_question_type == "pharmacogenomics" or normalized_primary_task_type == "pgx_guidance":
+            return set()
+        if normalized_question_type == "ddi_mechanism" or normalized_primary_task_type == "ddi_mechanism":
+            return {"clinically_relevant_ddi"}
+        if normalized_question_type == "ddi" or normalized_primary_task_type == "clinically_relevant_ddi":
+            return {"ddi_mechanism"}
+        return None
+
+    @staticmethod
+    def _allowed_task_types_for_query(query: str, *, fallback: QueryPlan) -> set[str]:
+        allowed = {
+            normalize_task_type(str(getattr(getattr(fallback, "primary_task", None), "task_type", "") or ""))
+        }
+        allowed.update(
+            normalize_task_type(str(getattr(task, "task_type", "") or ""))
+            for task in (getattr(fallback, "supporting_tasks", []) or [])
+        )
+        allowed.discard("")
+        allowed.discard("unknown")
+
+        lowered = str(query or "").strip().lower()
+        fallback_question_type = normalize_question_type(str(getattr(fallback, "question_type", "") or ""))
+        if (
+            fallback_question_type == "drug_repurposing"
+            and any(marker in lowered for marker in ("approved indication", "approved indications"))
+        ):
+            allowed.add("labeling_summary")
+
+        return allowed
+
+    @staticmethod
     def _normalize_entities(value: Any) -> Dict[str, List[str]]:
         if not isinstance(value, dict):
             return {}
@@ -381,10 +479,31 @@ Rules:
 
         normalized: List[str] = []
         for item in value:
-            text = str(item).strip()
-            if text:
+            if isinstance(item, (list, tuple, set)):
+                nested_items = item
+            else:
+                nested_items = [item]
+            for nested_item in nested_items:
+                text = PlannerAgent._normalize_entity_value(nested_item)
+                if not text:
+                    continue
                 normalized.append(text)
         return normalized
+
+    @staticmethod
+    def _normalize_entity_value(value: Any) -> str:
+        if isinstance(value, dict):
+            for key in ("name", "label", "entity", "value", "drug", "gene", "disease", "pathway"):
+                candidate = str(value.get(key, "")).strip()
+                if candidate:
+                    return candidate
+            for candidate in value.values():
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            return ""
+        if isinstance(value, (bytes, bytearray)):
+            return ""
+        return str(value).strip()
 
     @staticmethod
     def _infer_entities_from_query(query: str) -> Dict[str, List[str]]:

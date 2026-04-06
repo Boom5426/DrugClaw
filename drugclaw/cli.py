@@ -620,13 +620,6 @@ def _run_query(
 ) -> int:
     system = _build_system(key_file)
 
-    if not debug_agents:
-        print(f"\n{'='*80}")
-        print(f"QUERY [{thinking_mode}]: {query}")
-        if resource_filter:
-            print(f"RESOURCE FILTER: {resource_filter}")
-        print(f"{'='*80}\n")
-
     result = system.query(
         query,
         thinking_mode=thinking_mode,

@@ -578,7 +578,12 @@ Provide summary in this JSON format:
             candidate_entities=candidate_entities,
         )
         all_results = self._execute_searches(search_queries)
-        filtered_results = filter_results_for_question_type(question_type, all_results)
+        filtered_results = filter_results_for_question_type(
+            question_type,
+            all_results,
+            query=query,
+            candidate_entities=candidate_entities,
+        )
 
         state.web_search_results = filtered_results
         if filtered_results:

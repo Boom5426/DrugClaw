@@ -315,6 +315,11 @@ def _clean_label_text(text: str) -> str:
 
     cleaned = re.sub(r"^\d+(?:\.\d+)?\s+[A-Z][A-Z\s/&-]{3,40}\s+", "", cleaned)
     cleaned = re.sub(r"^\d+(?:\.\d+)?\s+[A-Z][a-zA-Z\s/&-]{3,40}\s+", "", cleaned)
+    for pattern, replacement in (
+        (r"\bLactaton\b", "Lactation"),
+        (r"\bdoage\b", "dosage"),
+    ):
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
 
 

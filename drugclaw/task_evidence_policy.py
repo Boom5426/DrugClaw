@@ -107,6 +107,13 @@ def _classify_drug_repurposing_item(item: EvidenceItem) -> EvidenceClassificatio
             rationale="RepoDB repurposing rows are the Phase 2A primary source for repurposing evidence.",
         )
 
+    if source_skill == "DrugRepoBank" and relationship == "repurposed_for" and target_type == "disease":
+        return EvidenceClassification(
+            tier="strong_structured",
+            slot="repurposing_evidence",
+            rationale="DrugRepoBank clinical-trial style repurposing rows provide structured repurposing evidence when the primary bundle is unavailable.",
+        )
+
     if (
         source_skill in {"DrugBank", "DrugCentral"}
         and relationship == "indicated_for"
@@ -116,6 +123,28 @@ def _classify_drug_repurposing_item(item: EvidenceItem) -> EvidenceClassificatio
             tier="strong_structured",
             slot="approved_indications",
             rationale="Structured disease-level indication rows from primary indication sources count as strong evidence.",
+        )
+
+    if (
+        source_skill == "RepurposeDrugs"
+        and relationship == "repurposed_for"
+        and target_type == "disease"
+    ):
+        return EvidenceClassification(
+            tier="generic_weak_support",
+            slot="repurposing_evidence",
+            rationale="RepurposeDrugs supplies exploratory repurposing associations that belong in the repurposing section but should not be upgraded to strong structured evidence.",
+        )
+
+    if (
+        source_skill == "OREGANO"
+        and relationship in {"clinical_signal", "repurposing_candidate"}
+        and target_type == "disease"
+    ):
+        return EvidenceClassification(
+            tier="generic_weak_support",
+            slot="repurposing_evidence",
+            rationale="OREGANO literature-derived clinical signals are exploratory repurposing support, not strong structured evidence.",
         )
 
     if source_skill in {"DailyMed", "openFDA Human Drug"} and relationship == "indicated_for":
