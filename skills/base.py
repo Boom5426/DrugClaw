@@ -37,13 +37,16 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
+import unicodedata
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from difflib import get_close_matches
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -342,6 +345,111 @@ class RAGSkill(ABC):
                 last_exc = exc
                 time.sleep(delay * (2 ** attempt))
         raise last_exc  # type: ignore[misc]
+
+    # ---- fuzzy name matching helpers -------------------------------------
+
+    @staticmethod
+    def _norm(name: str) -> str:
+        """
+        Normalise a drug/entity name for fuzzy matching.
+
+        Steps: Unicode NFKD decomposition → ASCII-fold → lowercase →
+               collapse non-alphanumeric runs to single spaces → strip.
+
+        Examples
+        --------
+        "Aspirin"            → "aspirin"
+        "ACETAMINOPHEN"      → "acetaminophen"
+        "metformin HCl"      → "metformin hcl"
+        "5-fluorouracil"     → "5 fluorouracil"
+        "Atorvastatin (10)"  → "atorvastatin 10"
+        """
+        n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+        n = re.sub(r"[^a-z0-9]", " ", n.lower())
+        return re.sub(r"\s+", " ", n).strip()
+
+    def _build_fuzzy_index(
+        self,
+        keys: Iterable[str],
+        attr: str = "_fuzzy_norm_map",
+    ) -> None:
+        """
+        Build a normalised→canonical lookup dict for a set of index keys.
+
+        Call once after loading data.  Pass the same keys that are used as
+        keys in your internal index dict (e.g. ``self._drug_index.keys()``).
+        The result is stored as an instance attribute (default
+        ``_fuzzy_norm_map``) so that :meth:`_fuzzy_get` can use it.
+
+        Parameters
+        ----------
+        keys : iterable of str
+            Canonical key strings (as stored in the index dict).
+        attr : str
+            Name of the instance attribute to store the map in.
+            Use different names when you have multiple index dicts
+            (e.g. ``"_drug_fuzzy"`` and ``"_disease_fuzzy"``).
+        """
+        setattr(self, attr, {self._norm(k): k for k in keys})
+
+    def _fuzzy_get(
+        self,
+        query: str,
+        index: Dict[str, list],
+        norm_map_attr: str = "_fuzzy_norm_map",
+        cutoff: float = 0.85,
+    ) -> list:
+        """
+        Fuzzy lookup in *index* for *query*.
+
+        Returns a flat list of all values stored under the best-matching
+        key(s) in *index*.  Empty list if nothing found.
+
+        Matching strategy (in priority order):
+        1. Exact lowercase match — ``index[query.lower()]``
+        2. Normalised exact match — via pre-built norm→canonical map
+        3. Substring match — norm(query) ⊆ norm(key) or vice-versa
+        4. ``difflib.get_close_matches`` with *cutoff*
+
+        Parameters
+        ----------
+        query       : raw drug name from user input (any case, may have typos)
+        index       : dict mapping canonical_lower → List[…]
+        norm_map_attr : instance attribute name of the pre-built norm map
+                      (built by :meth:`_build_fuzzy_index`)
+        cutoff      : similarity threshold for difflib (default 0.85)
+        """
+        # 1. Direct exact lowercase match (fast path, covers most cases)
+        q_lower = query.lower()
+        if q_lower in index:
+            return list(index[q_lower])
+
+        # Retrieve the pre-built norm map (may be absent if not built yet)
+        norm_map: Dict[str, str] = getattr(self, norm_map_attr, {})
+
+        # 2. Build lazily from index keys when not pre-built
+        if not norm_map:
+            norm_map = {self._norm(k): k for k in index.keys()}
+
+        q_norm = self._norm(query)
+
+        # 3. Normalised exact match
+        if q_norm in norm_map:
+            return list(index.get(norm_map[q_norm], []))
+
+        # 4. Substring match (handles salts: "metformin hcl" ↔ "metformin")
+        results: list = []
+        for k_norm, canon in norm_map.items():
+            if q_norm and (q_norm in k_norm or k_norm in q_norm):
+                results.extend(index.get(canon, []))
+        if results:
+            return results
+
+        # 5. difflib fuzzy match
+        close = get_close_matches(q_norm, list(norm_map.keys()), n=3, cutoff=cutoff)
+        for cn in close:
+            results.extend(index.get(norm_map[cn], []))
+        return results
 
 
 # ---------------------------------------------------------------------------

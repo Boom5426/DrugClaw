@@ -71,6 +71,7 @@ class DrugEHRQASkill(DatasetRAGSkill):
                         self._rows.append({"drug": drug, "question": q, "answer": a})
                         self._drug_index[str(drug).lower()].append(idx)
             logger.info("DrugEHRQA: loaded %d QA records", len(self._rows))
+            self._build_fuzzy_index(self._drug_index.keys())
         except Exception as exc:
             logger.error("DrugEHRQA: JSON load failed — %s", exc)
 
@@ -85,6 +86,7 @@ class DrugEHRQASkill(DatasetRAGSkill):
                         self._rows.append(row)
                         self._drug_index[drug.lower()].append(idx)
             logger.info("DrugEHRQA: loaded %d records from CSV", len(self._rows))
+            self._build_fuzzy_index(self._drug_index.keys())
         except Exception as exc:
             logger.error("DrugEHRQA: CSV load failed — %s", exc)
 
@@ -102,7 +104,7 @@ class DrugEHRQASkill(DatasetRAGSkill):
         self._ensure_loaded()
         results: List[RetrievalResult] = []
         for drug in entities.get("drug", []):
-            for idx in self._drug_index.get(drug.lower(), []):
+            for idx in self._fuzzy_get(drug, self._drug_index):
                 if len(results) >= max_results:
                     break
                 row = self._rows[idx]

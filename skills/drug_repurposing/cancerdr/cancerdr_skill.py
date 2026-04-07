@@ -71,6 +71,9 @@ class CancerDRSkill(RAGSkill):
             logger.info("CancerDR: loaded %d resistance records", len(self._rows))
         except Exception as exc:
             logger.error("CancerDR: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys())
 
     def _discover_default_path(self) -> str:
         repo_root = Path(__file__).resolve().parents[3]
@@ -101,7 +104,7 @@ class CancerDRSkill(RAGSkill):
         seen: set = set()
 
         for drug in entities.get("drug", []):
-            for idx in self._drug_index.get(drug.lower(), []):
+            for idx in self._fuzzy_get(drug, self._drug_index):
                 if len(results) >= max_results or idx in seen:
                     break
                 seen.add(idx)

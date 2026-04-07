@@ -80,6 +80,10 @@ class RepoDBSkill(DatasetRAGSkill):
             logger.info("RepoDB: loaded %d pairs", len(self._rows))
         except Exception as exc:
             logger.error("RepoDB: cannot load %s — %s", path, exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys(), "_drug_fuzzy")
+        self._build_fuzzy_index(self._disease_index.keys(), "_disease_fuzzy")
 
     def is_available(self) -> bool:
         self._ensure_loaded()
@@ -153,10 +157,10 @@ class RepoDBSkill(DatasetRAGSkill):
                 )
 
         for drug in entities.get("drug", []):
-            _build_edges(self._drug_index.get(drug.lower(), []), drug)
+            _build_edges(self._fuzzy_get(drug, self._drug_index, "_drug_fuzzy"), drug)
 
         for disease in entities.get("disease", []):
-            _build_edges(self._disease_index.get(disease.lower(), []), disease)
+            _build_edges(self._fuzzy_get(disease, self._disease_index, "_disease_fuzzy"), disease)
 
         return results
 

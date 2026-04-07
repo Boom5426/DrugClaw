@@ -73,6 +73,10 @@ class WebMDReviewsSkill(DatasetRAGSkill):
             logger.info("WebMD Reviews: loaded %d reviews", len(self._rows))
         except Exception as exc:
             logger.error("WebMD Reviews: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys(), "_drug_fuzzy")
+        self._build_fuzzy_index(self._condition_index.keys(), "_condition_fuzzy")
 
     def is_available(self) -> bool:
         return self._implemented
@@ -118,9 +122,9 @@ class WebMDReviewsSkill(DatasetRAGSkill):
                 ))
 
         for drug in entities.get("drug", []):
-            _add(self._drug_index.get(drug.lower(), []))
+            _add(self._fuzzy_get(drug, self._drug_index, "_drug_fuzzy"))
         for disease in entities.get("disease", []):
-            _add(self._condition_index.get(disease.lower(), []))
+            _add(self._fuzzy_get(disease, self._condition_index, "_condition_fuzzy"))
         return results
 
     def get_all_pairs(self) -> List[Dict[str, Any]]:

@@ -23,12 +23,13 @@ class UniToxSkill(RAGSkill):
                 for row in csv.DictReader(fh):
                     drug = (row.get("drug","") or row.get("Drug","")).strip()
                     if drug: idx=len(self._rows); self._rows.append(row); self._drug_index[drug.lower()].append(idx)
-        except Exception as e: logger.error("UniTox load failed: %s", e)
+        except Exception as e: logger.error("UniTox load failed: %s", e); return
+        self._build_fuzzy_index(self._drug_index.keys())
     def is_available(self): self._ensure_loaded(); return bool(self._rows)
     def retrieve(self, entities, query="", max_results=30, **kwargs):
         self._ensure_loaded(); results=[]
         for drug in entities.get("drug",[]):
-            for idx in self._drug_index.get(drug.lower(),[]):
+            for idx in self._fuzzy_get(drug, self._drug_index):
                 if len(results)>=max_results: break
                 row=self._rows[idx]; tox=row.get("toxicity","") or row.get("label","")
                 organ = row.get("organ_system","") or row.get("system","")

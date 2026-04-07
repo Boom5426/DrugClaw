@@ -71,6 +71,9 @@ class DrugCombDBSkill(RAGSkill):
             logger.info("DrugCombDB: loaded %d drug-combination records", len(self._rows))
         except Exception as exc:
             logger.error("DrugCombDB: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys())
 
     def is_available(self) -> bool:
         self._ensure_loaded()
@@ -88,7 +91,7 @@ class DrugCombDBSkill(RAGSkill):
         seen: set = set()
 
         for drug in entities.get("drug", []):
-            for idx in self._drug_index.get(drug.lower(), []):
+            for idx in self._fuzzy_get(drug, self._drug_index):
                 if len(results) >= max_results or idx in seen:
                     continue
                 seen.add(idx)

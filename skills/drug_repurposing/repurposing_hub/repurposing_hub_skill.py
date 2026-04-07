@@ -22,12 +22,13 @@ class RepurposingHubSkill(RAGSkill):
                 for row in csv.DictReader(fh):
                     drug = (row.get("name","") or row.get("pert_iname","")).strip()
                     if drug: idx=len(self._rows); self._rows.append(row); self._drug_index[drug.lower()].append(idx)
-        except Exception as e: logger.error("RepurposingHub load failed: %s", e)
+        except Exception as e: logger.error("RepurposingHub load failed: %s", e); return
+        self._build_fuzzy_index(self._drug_index.keys())
     def is_available(self): self._ensure_loaded(); return bool(self._rows)
     def retrieve(self, entities, query="", max_results=30, **kwargs):
         self._ensure_loaded(); results=[]
         for drug in entities.get("drug",[]):
-            for row in self._drug_index.get(drug.lower(),[]):
+            for row in self._fuzzy_get(drug, self._drug_index):
                 if len(results)>=max_results: break
                 r=self._rows[row]; target=r.get("target",""); moa=r.get("moa","")
                 phase = r.get("clinical_phase", "") or r.get("phase", "")

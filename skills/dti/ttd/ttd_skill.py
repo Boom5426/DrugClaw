@@ -80,6 +80,10 @@ class TTDSkill(RAGSkill):
                         self._target_index[target.lower()].append(entry)
         except Exception as exc:
             logger.error("TTD: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys(), "_drug_fuzzy")
+        self._build_fuzzy_index(self._target_index.keys(), "_target_fuzzy")
 
     def is_available(self) -> bool:
         self._ensure_loaded()
@@ -96,13 +100,13 @@ class TTDSkill(RAGSkill):
         results: List[RetrievalResult] = []
 
         for drug in entities.get("drug", []):
-            for entry in self._drug_index.get(drug.lower(), []):
+            for entry in self._fuzzy_get(drug, self._drug_index, "_drug_fuzzy"):
                 if len(results) >= max_results:
                     break
                 results.append(self._to_result(entry))
 
         for gene in entities.get("gene", []):
-            for entry in self._target_index.get(gene.lower(), []):
+            for entry in self._fuzzy_get(gene, self._target_index, "_target_fuzzy"):
                 if len(results) >= max_results:
                     break
                 results.append(self._to_result(entry))

@@ -67,6 +67,9 @@ class DrugProtSkill(DatasetRAGSkill):
             logger.info("DrugProt: loaded %d relation records", len(self._rows))
         except Exception as exc:
             logger.error("DrugProt: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys())
 
     def is_available(self) -> bool:
         self._ensure_loaded()
@@ -83,7 +86,7 @@ class DrugProtSkill(DatasetRAGSkill):
         results: List[RetrievalResult] = []
         seen: set = set()
         for drug in entities.get("drug", []):
-            for idx in self._drug_index.get(drug.lower(), []):
+            for idx in self._fuzzy_get(drug, self._drug_index):
                 if len(results) >= max_results or idx in seen:
                     continue
                 seen.add(idx)

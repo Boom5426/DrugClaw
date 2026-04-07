@@ -62,6 +62,9 @@ class DTCSkill(RAGSkill):
             logger.info("DTC: loaded %d drugs", len(self._drug_index))
         except Exception as exc:
             logger.error("DTC: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys())
 
     def is_available(self) -> bool:
         self._ensure_loaded()
@@ -78,7 +81,7 @@ class DTCSkill(RAGSkill):
         results: List[RetrievalResult] = []
 
         for drug in entities.get("drug", []):
-            for row in self._drug_index.get(drug.lower(), []):
+            for row in self._fuzzy_get(drug, self._drug_index):
                 if len(results) >= max_results:
                     break
                 target = (

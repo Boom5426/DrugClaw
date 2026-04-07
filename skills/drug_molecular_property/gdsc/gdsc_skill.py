@@ -79,6 +79,9 @@ class GDSCSkill(RAGSkill):
             logger.info("GDSC: loaded %d drug-cell sensitivity records", len(self._rows))
         except Exception as exc:
             logger.error("GDSC: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys())
 
     def is_available(self) -> bool:
         self._ensure_loaded()
@@ -95,7 +98,7 @@ class GDSCSkill(RAGSkill):
         results: List[RetrievalResult] = []
 
         for drug in entities.get("drug", []):
-            idxs = list(self._drug_index.get(drug.lower(), []))
+            idxs = self._fuzzy_get(drug, self._drug_index)
             if not idxs:
                 idxs = list(self._synonym_index.get(drug.lower(), []))
             for idx in idxs:

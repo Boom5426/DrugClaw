@@ -75,6 +75,10 @@ class DrugRepoBankSkill(RAGSkill):
             logger.info("DrugRepoBank: loaded %d repurposing records", len(self._rows))
         except Exception as exc:
             logger.error("DrugRepoBank: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys(), "_drug_fuzzy")
+        self._build_fuzzy_index(self._disease_index.keys(), "_disease_fuzzy")
 
     def is_available(self) -> bool:
         self._ensure_loaded()
@@ -122,7 +126,7 @@ class DrugRepoBankSkill(RAGSkill):
                 ))
 
         for drug in entities.get("drug", []):
-            _add(self._drug_index.get(drug.lower(), []))
+            _add(self._fuzzy_get(drug, self._drug_index, "_drug_fuzzy"))
         for disease in entities.get("disease", []):
-            _add(self._disease_index.get(disease.lower(), []))
+            _add(self._fuzzy_get(disease, self._disease_index, "_disease_fuzzy"))
         return results

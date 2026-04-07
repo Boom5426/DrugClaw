@@ -78,6 +78,10 @@ class DCDBSkill(RAGSkill):
             logger.info("DCDB: loaded %d drug combination records", len(self._rows))
         except Exception as exc:
             logger.error("DCDB: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys(), "_drug_fuzzy")
+        self._build_fuzzy_index(self._disease_index.keys(), "_disease_fuzzy")
 
     def _discover_default_path(self) -> str:
         repo_root = Path(__file__).resolve().parents[3]
@@ -142,7 +146,7 @@ class DCDBSkill(RAGSkill):
                 ))
 
         for drug in entities.get("drug", []):
-            _add(self._drug_index.get(drug.lower(), []))
+            _add(self._fuzzy_get(drug, self._drug_index, "_drug_fuzzy"))
         for disease in entities.get("disease", []):
-            _add(self._disease_index.get(disease.lower(), []))
+            _add(self._fuzzy_get(disease, self._disease_index, "_disease_fuzzy"))
         return results

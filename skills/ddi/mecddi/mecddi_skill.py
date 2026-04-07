@@ -53,6 +53,9 @@ class MecDDISkill(RAGSkill):
                     if d2: self._drug_index[d2.lower()].append(row)
         except Exception as exc:
             logger.error("MecDDI: load failed — %s", exc)
+            return
+
+        self._build_fuzzy_index(self._drug_index.keys())
 
     def is_available(self) -> bool:
         self._ensure_loaded()
@@ -68,7 +71,7 @@ class MecDDISkill(RAGSkill):
         self._ensure_loaded()
         results: List[RetrievalResult] = []
         for drug in entities.get("drug", []):
-            for row in self._drug_index.get(drug.lower(), []):
+            for row in self._fuzzy_get(drug, self._drug_index):
                 if len(results) >= max_results:
                     break
                 d1 = row.get("drug1", "") or row.get("Drug1", "")
