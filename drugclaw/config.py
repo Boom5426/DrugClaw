@@ -147,11 +147,18 @@ class Config:
             "DrugBank": {
                 "api_key": "",           # optional — full access requires key
                 "timeout": 20,
+                "vocab_csv_path": str(repo_root / "resources_metadata/drug_knowledgebase/DrugBank/drugbank vocabulary.csv"),
+                "xml_path": str(repo_root / "resources_metadata/drug_knowledgebase/DrugBank/full database.xml"),
             },
             # IUPHAR: public REST API
             "IUPHAR/BPS Guide to Pharmacology": {"timeout": 20},
             # DrugCentral: public REST API
-            "DrugCentral": {"timeout": 20},
+            "DrugCentral": {
+                "timeout": 20,
+                "structures_path": str(repo_root / "resources_metadata/drug_knowledgebase/DrugCentral/structures.smiles.tsv"),
+                "targets_path": str(repo_root / "resources_metadata/drug_knowledgebase/DrugCentral/drug.target.interaction.tsv"),
+                "approved_path": str(repo_root / "resources_metadata/drug_knowledgebase/DrugCentral/FDA+EMA+PMDA_Approved.csv"),
+            },
             # Drugs.com: no public API
             "Drugs.com": {},
             # PharmKG: local TSV from github.com/MindRank-Biotech/PharmKG

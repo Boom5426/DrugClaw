@@ -59,6 +59,21 @@ _OFFLINE_DRUG_BY_ID = {
     "CPIC-DRUG-2": {"drugid": "CPIC-DRUG-2", "name": "codeine", "flowchart": "https://cpicpgx.org/"},
 }
 
+# Curated overlays fill clinically important semantics that the public pair
+# payload does not reliably expose in a machine-readable field.
+_PAIR_GUIDANCE_OVERRIDES = {
+    ("clopidogrel", "CYP2C19"): {
+        "mechanism_summary": (
+            "CYP2C19 loss-of-function can reduce clopidogrel active metabolite "
+            "formation and antiplatelet effect."
+        ),
+        "guidance_summary": (
+            "Consider alternative therapy such as prasugrel or ticagrelor for "
+            "CYP2C19 poor or intermediate metabolizers when clinically appropriate."
+        ),
+    },
+}
+
 
 class CPICSkill(RAGSkill):
     """CPIC clinical pharmacogenomics guidelines."""
@@ -156,6 +171,7 @@ class CPICSkill(RAGSkill):
                         "pgxtesting": pair.get("pgxtesting"),
                         "usedforrecommendation": used,
                         "flowchart": item.get("flowchart"),
+                        **self._pair_guidance_override(drug_name, gene_symbol),
                     },
                 ))
         return results
@@ -207,9 +223,19 @@ class CPICSkill(RAGSkill):
                     "pgxtesting": pair.get("pgxtesting"),
                     "usedforrecommendation": pair.get("usedforrecommendation"),
                     "flowchart": drug_row.get("flowchart"),
+                    **self._pair_guidance_override(drug_name, gene_symbol),
                 },
             ))
         return results
+
+    @staticmethod
+    def _pair_guidance_override(drug_name: str, gene_symbol: str) -> Dict[str, str]:
+        return dict(
+            _PAIR_GUIDANCE_OVERRIDES.get(
+                (str(drug_name or "").strip().lower(), str(gene_symbol or "").strip().upper()),
+                {},
+            )
+        )
 
     def _resolve_drug_rows(self, drug: str) -> List[Dict[str, Any]]:
         encoded = urllib.parse.quote(f"*{drug}*")

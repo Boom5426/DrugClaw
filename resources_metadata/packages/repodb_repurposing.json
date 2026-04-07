@@ -1,0 +1,16 @@
+{
+  "package_id": "repodb_repurposing",
+  "skill_name": "RepoDB",
+  "dataset_bundle": [
+    "resources_metadata/drug_repurposing/RepoDB/full.csv"
+  ],
+  "protocol_docs": [
+    "resources_metadata/packages/repodb_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/repodb_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/drug_repurposing/repurposing_evidence_thresholds.md"
+  ]
+}

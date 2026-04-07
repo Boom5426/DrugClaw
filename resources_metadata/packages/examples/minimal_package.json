@@ -1,0 +1,13 @@
+{
+  "package_id": "minimal_example_package",
+  "skill_name": "Example Skill",
+  "dataset_bundle": [
+    "resources_metadata/packages/examples/minimal_dataset.csv"
+  ],
+  "protocol_docs": [
+    "resources_metadata/packages/examples/minimal_protocol.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/examples/minimal_knowhow.md"
+  ]
+}

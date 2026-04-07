@@ -8,6 +8,10 @@ their catalog metadata, and the build_default_registry() factory.
 from .base import RAGSkill, DatasetRAGSkill, RetrievalResult, AccessMode
 from .registry import SkillRegistry
 from .skill_tree import SkillTree, SkillNode, Subcategory
+try:
+    from ..resource_path_resolver import resolve_skill_config_paths
+except ImportError:  # pragma: no cover - compatibility for top-level `skills` import
+    from drugclaw.resource_path_resolver import resolve_skill_config_paths
 
 SubDomain = Subcategory  # legacy alias
 Domain = Subcategory     # legacy alias
@@ -58,97 +62,102 @@ def build_default_registry(config) -> SkillRegistry:
     sc = getattr(config, "SKILL_CONFIGS", {})
     registry = SkillRegistry()
 
+    def _cfg(skill_name: str, extra: dict | None = None) -> dict:
+        merged = dict(extra or {})
+        merged.update(sc.get(skill_name, {}))
+        return resolve_skill_config_paths(skill_name, merged)
+
     # ── DTI (8 implemented) ──────────────────────────────────────────
-    registry.register(ChEMBLSkill(sc.get("ChEMBL", {})))
-    registry.register(BindingDBSkill(sc.get("BindingDB", {})))
-    registry.register(DGIdbSkill(sc.get("DGIdb", {})))
-    registry.register(OpenTargetsSkill(sc.get("Open Targets Platform", {})))
-    registry.register(TTDSkill(sc.get("TTD", {})))
-    registry.register(STITCHSkill(sc.get("STITCH", {})))
-    registry.register(TarKGSkill(sc.get("TarKG", {})))
-    registry.register(GDKDSkill(sc.get("GDKD", {})))
-    registry.register(MolecularTargetsSkill(sc.get("Molecular Targets", {})))
-    registry.register(MolecularTargetsDataSkill(sc.get("Molecular Targets Data", {})))
+    registry.register(ChEMBLSkill(_cfg("ChEMBL")))
+    registry.register(BindingDBSkill(_cfg("BindingDB")))
+    registry.register(DGIdbSkill(_cfg("DGIdb")))
+    registry.register(OpenTargetsSkill(_cfg("Open Targets Platform")))
+    registry.register(TTDSkill(_cfg("TTD")))
+    registry.register(STITCHSkill(_cfg("STITCH")))
+    registry.register(TarKGSkill(_cfg("TarKG")))
+    registry.register(GDKDSkill(_cfg("GDKD")))
+    registry.register(MolecularTargetsSkill(_cfg("Molecular Targets")))
+    registry.register(MolecularTargetsDataSkill(_cfg("Molecular Targets Data")))
 
     # ── ADR (4 implemented) ──────────────────────────────────────────
-    registry.register(FAERSSkill(sc.get("FAERS", {})))
-    registry.register(SIDERSkill(sc.get("SIDER", {})))
-    registry.register(nSIDESSkill(sc.get("nSIDES", {})))
-    registry.register(ADReCSSkill(sc.get("ADReCS", {})))
+    registry.register(FAERSSkill(_cfg("FAERS")))
+    registry.register(SIDERSkill(_cfg("SIDER")))
+    registry.register(nSIDESSkill(_cfg("nSIDES")))
+    registry.register(ADReCSSkill(_cfg("ADReCS")))
 
     # ── Drug Knowledgebase (8 implemented) ───────────────────────────
     registry.register(UniD3Skill({
         "graphml_paths": getattr(config, "KG_ENDPOINTS", {}).get("unid3", {}),
-        **sc.get("UniD3", {}),
+        **_cfg("UniD3"),
     }))
-    registry.register(DrugBankSkill(sc.get("DrugBank", {})))
-    registry.register(IUPHARSkill(sc.get("IUPHAR/BPS Guide to Pharmacology", {})))
-    registry.register(DrugCentralSkill(sc.get("DrugCentral", {})))
-    registry.register(CPICSkill(sc.get("CPIC", {})))
-    registry.register(PharmKGSkill(sc.get("PharmKG", {})))
-    registry.register(WHOEssentialMedicinesSkill(sc.get("WHO Essential Medicines List", {})))
-    registry.register(FDAOrangeBookSkill(sc.get("FDA Orange Book", {})))
+    registry.register(DrugBankSkill(_cfg("DrugBank")))
+    registry.register(IUPHARSkill(_cfg("IUPHAR/BPS Guide to Pharmacology")))
+    registry.register(DrugCentralSkill(_cfg("DrugCentral")))
+    registry.register(CPICSkill(_cfg("CPIC")))
+    registry.register(PharmKGSkill(_cfg("PharmKG")))
+    registry.register(WHOEssentialMedicinesSkill(_cfg("WHO Essential Medicines List")))
+    registry.register(FDAOrangeBookSkill(_cfg("FDA Orange Book")))
 
     # ── Drug Mechanism (1 implemented) ───────────────────────────────
-    registry.register(DrugMechDBSkill(sc.get("DRUGMECHDB", {})))
+    registry.register(DrugMechDBSkill(_cfg("DRUGMECHDB")))
 
     # ── Drug Labeling (3 implemented) ────────────────────────────────
-    registry.register(OpenFDASkill(sc.get("openFDA Human Drug", {})))
-    registry.register(DailyMedSkill(sc.get("DailyMed", {})))
-    registry.register(MedlinePlusSkill(sc.get("MedlinePlus Drug Info", {})))
+    registry.register(OpenFDASkill(_cfg("openFDA Human Drug")))
+    registry.register(DailyMedSkill(_cfg("DailyMed")))
+    registry.register(MedlinePlusSkill(_cfg("MedlinePlus Drug Info")))
 
     # ── Drug Ontology (4 implemented) ────────────────────────────────
-    registry.register(RxNormSkill(sc.get("RxNorm", {})))
-    registry.register(ChEBISkill(sc.get("ChEBI", {})))
-    registry.register(ATCSkill(sc.get("ATC/DDD", {})))
-    registry.register(NDFRTSkill(sc.get("NDF-RT", {})))
+    registry.register(RxNormSkill(_cfg("RxNorm")))
+    registry.register(ChEBISkill(_cfg("ChEBI")))
+    registry.register(ATCSkill(_cfg("ATC/DDD")))
+    registry.register(NDFRTSkill(_cfg("NDF-RT")))
 
     # ── Drug Repurposing (6 implemented) ─────────────────────────────
-    registry.register(RepoDBSkill(sc.get("RepoDB", {})))
-    registry.register(DRKGSkill(sc.get("DRKG", {})))
-    registry.register(OREGANOSkill(sc.get("OREGANO", {})))
-    registry.register(RepurposingHubSkill(sc.get("Drug Repurposing Hub", {})))
-    registry.register(DrugRepoBankSkill(sc.get("DrugRepoBank", {})))
-    registry.register(RepurposeDrugsSkill(sc.get("RepurposeDrugs", {})))
+    registry.register(RepoDBSkill(_cfg("RepoDB")))
+    registry.register(DRKGSkill(_cfg("DRKG")))
+    registry.register(OREGANOSkill(_cfg("OREGANO")))
+    registry.register(RepurposingHubSkill(_cfg("Drug Repurposing Hub")))
+    registry.register(DrugRepoBankSkill(_cfg("DrugRepoBank")))
+    registry.register(RepurposeDrugsSkill(_cfg("RepurposeDrugs")))
 
     # ── Pharmacogenomics (1 implemented) ─────────────────────────────
-    registry.register(PharmGKBSkill(sc.get("PharmGKB", {})))
+    registry.register(PharmGKBSkill(_cfg("PharmGKB")))
 
     # ── DDI (3 implemented) ──────────────────────────────────────────
-    registry.register(MecDDISkill(sc.get("MecDDI", {})))
-    registry.register(DDInterSkill(sc.get("DDInter", {})))
-    registry.register(KEGGDrugSkill(sc.get("KEGG Drug", {})))
+    registry.register(MecDDISkill(_cfg("MecDDI")))
+    registry.register(DDInterSkill(_cfg("DDInter")))
+    registry.register(KEGGDrugSkill(_cfg("KEGG Drug")))
 
     # ── Drug Review (2 implemented) ──────────────────────────────────
-    registry.register(WebMDReviewsSkill(sc.get("WebMD Drug Reviews", {})))
-    registry.register(DrugsComReviewsSkill(sc.get("Drug Reviews (Drugs.com)", {})))
+    registry.register(WebMDReviewsSkill(_cfg("WebMD Drug Reviews")))
+    registry.register(DrugsComReviewsSkill(_cfg("Drug Reviews (Drugs.com)")))
 
     # ── Drug Toxicity (4 implemented) ────────────────────────────────
-    registry.register(UniToxSkill(sc.get("UniTox", {})))
-    registry.register(LiverToxSkill(sc.get("LiverTox", {})))
-    registry.register(DILIrankSkill(sc.get("DILIrank", {})))
-    registry.register(DILISkill(sc.get("DILI", {})))
+    registry.register(UniToxSkill(_cfg("UniTox")))
+    registry.register(LiverToxSkill(_cfg("LiverTox")))
+    registry.register(DILIrankSkill(_cfg("DILIrank")))
+    registry.register(DILISkill(_cfg("DILI")))
 
     # ── Drug Combination (2 implemented) ─────────────────────────────
-    registry.register(DrugCombDBSkill(sc.get("DrugCombDB", {})))
-    registry.register(DrugCombSkill(sc.get("DrugComb", {})))
+    registry.register(DrugCombDBSkill(_cfg("DrugCombDB")))
+    registry.register(DrugCombSkill(_cfg("DrugComb")))
 
     # ── Drug Molecular Property (1 implemented) ──────────────────────
-    registry.register(GDSCSkill(sc.get("GDSC", {})))
+    registry.register(GDSCSkill(_cfg("GDSC")))
 
     # ── Drug Disease (1 implemented) ─────────────────────────────────
-    registry.register(SemaTyPSkill(sc.get("SemaTyP", {})))
+    registry.register(SemaTyPSkill(_cfg("SemaTyP")))
 
     # ── Drug NLP (7 implemented) ─────────────────────────────────────
-    registry.register(DDICorpusSkill(sc.get("DDI Corpus 2013", {})))
-    registry.register(DrugProtSkill(sc.get("DrugProt", {})))
-    registry.register(ADECorpusSkill(sc.get("ADE Corpus", {})))
-    registry.register(CADECSkill(sc.get("CADEC", {})))
-    registry.register(PsyTARSkill(sc.get("PsyTAR", {})))
-    registry.register(TAC2017ADRSkill(sc.get("TAC 2017 ADR", {})))
-    registry.register(PHEESkill(sc.get("PHEE", {})))
+    registry.register(DDICorpusSkill(_cfg("DDI Corpus 2013")))
+    registry.register(DrugProtSkill(_cfg("DrugProt")))
+    registry.register(ADECorpusSkill(_cfg("ADE Corpus")))
+    registry.register(CADECSkill(_cfg("CADEC")))
+    registry.register(PsyTARSkill(_cfg("PsyTAR")))
+    registry.register(TAC2017ADRSkill(_cfg("TAC 2017 ADR")))
+    registry.register(PHEESkill(_cfg("PHEE")))
 
     # ── Web Search (always-on) ───────────────────────────────────────
-    registry.register(WebSearchSkill(sc.get("WebSearch", {})))
+    registry.register(WebSearchSkill(_cfg("WebSearch")))
 
     return registry

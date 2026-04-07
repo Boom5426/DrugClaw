@@ -116,6 +116,33 @@ class WebSearchSkill(RAGSkill):
 
         return results[:max_results]
 
+    def search_with_source(
+        self,
+        query: str,
+        *,
+        source: str | None = None,
+        max_results: int = 10,
+    ) -> List[RetrievalResult]:
+        """Run a source-directed search when the caller has already chosen a lane."""
+        normalized_source = str(source or "").strip().lower()
+        timeout = self.config.get("timeout", 10)
+
+        if normalized_source == "pubmed":
+            try:
+                return self._pubmed_search(query, max_results, timeout)
+            except Exception as exc:
+                logger.warning("WebSearch PubMed error: %s", exc)
+                return []
+
+        if normalized_source in {"duckduckgo", "ddg"}:
+            try:
+                return self._ddg_search(query, max_results, timeout)
+            except Exception as exc:
+                logger.warning("WebSearch DDG error: %s", exc)
+                return []
+
+        return self.search(query, max_results=max_results)
+
     # ------------------------------------------------------------------ #
     # DuckDuckGo                                                           #
     # ------------------------------------------------------------------ #

@@ -1,0 +1,20 @@
+{
+  "package_id": "dgidb_core",
+  "skill_name": "DGIdb",
+  "protocol_docs": [
+    "resources_metadata/packages/dgidb_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/dgidb_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/dti/direct_targets_grounding.md"
+  ],
+  "gateway": {
+    "transport": "graphql",
+    "endpoint": "https://dgidb.org/api/graphql",
+    "tool_namespace": "dgidb.drug_gene_interactions",
+    "docs_url": "https://dgidb.org/api/graphql",
+    "read_only": true
+  }
+}

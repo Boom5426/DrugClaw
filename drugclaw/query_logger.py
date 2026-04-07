@@ -15,12 +15,18 @@ Each query is stored in its own directory:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pickle
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - only relevant on non-POSIX platforms
+    fcntl = None
 
 from .response_formatter import (
     format_reasoning_trace,
@@ -49,15 +55,119 @@ class QueryLogger:
 
     def _load_or_create_index(self):
         if self.index_file.exists():
-            with open(self.index_file, "r") as f:
-                self.index = json.load(f)
+            self.index = self._read_index_from_disk()
         else:
             self.index = {"total_queries": 0, "queries": []}
             self._save_index()
+        self._sync_index_from_logs()
 
     def _save_index(self):
-        with open(self.index_file, "w") as f:
-            json.dump(self.index, indent=2, fp=f)
+        self._write_index_to_disk(self.index)
+
+    def _read_index_from_disk(self) -> Dict[str, Any]:
+        if not self.index_file.exists():
+            return {"total_queries": 0, "queries": []}
+        with open(self.index_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return self._normalize_index(payload)
+
+    @staticmethod
+    def _normalize_index(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+        raw_queries = list((payload or {}).get("queries", []) or [])
+        normalized_queries: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for entry in raw_queries:
+            query_id = str((entry or {}).get("query_id", "") or "").strip()
+            if not query_id or query_id in seen:
+                continue
+            seen.add(query_id)
+            normalized_queries.append(dict(entry or {}))
+        return {
+            "total_queries": len(normalized_queries),
+            "queries": normalized_queries,
+        }
+
+    @contextlib.contextmanager
+    def _locked_index_handle(self, mode: str):
+        with open(self.index_file, mode, encoding="utf-8") as f:
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                yield f
+            finally:
+                f.flush()
+                os.fsync(f.fileno())
+                if fcntl is not None:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+    def _write_index_to_disk(self, payload: Dict[str, Any]) -> None:
+        normalized = self._normalize_index(payload)
+        with self._locked_index_handle("a+") as f:
+            f.seek(0)
+            f.truncate()
+            json.dump(normalized, indent=2, fp=f, ensure_ascii=False)
+        self.index = normalized
+
+    def _append_index_entry(self, entry: Dict[str, Any]) -> None:
+        self.index_file.parent.mkdir(parents=True, exist_ok=True)
+        if not self.index_file.exists():
+            self.index_file.write_text(
+                json.dumps({"total_queries": 0, "queries": []}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        with self._locked_index_handle("r+") as f:
+            try:
+                current = json.load(f)
+            except json.JSONDecodeError:
+                current = {"total_queries": 0, "queries": []}
+            normalized = self._normalize_index(current)
+            known_ids = {
+                str(item.get("query_id", "") or "").strip()
+                for item in normalized.get("queries", [])
+            }
+            query_id = str(entry.get("query_id", "") or "").strip()
+            if query_id and query_id not in known_ids:
+                normalized["queries"].append(dict(entry))
+            normalized["total_queries"] = len(normalized["queries"])
+            f.seek(0)
+            f.truncate()
+            json.dump(normalized, indent=2, fp=f, ensure_ascii=False)
+        self.index = normalized
+
+    def _sync_index_from_logs(self) -> None:
+        entries_by_id = {
+            str(entry.get("query_id", "") or "").strip(): dict(entry)
+            for entry in self.index.get("queries", [])
+            if str(entry.get("query_id", "") or "").strip()
+        }
+        changed = False
+        for meta_file in sorted(self.log_dir.glob("query_*/metadata.json")):
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            query_id = str(meta.get("query_id", "") or "").strip()
+            if not query_id or query_id in entries_by_id:
+                continue
+            entries_by_id[query_id] = {
+                "query_id": query_id,
+                "timestamp": str(meta.get("timestamp", "") or ""),
+                "query": str(meta.get("query", "") or "")[:100],
+                "success": bool(meta.get("success", False)),
+                "iterations": int(meta.get("iterations", 0) or 0),
+                "mode": str(meta.get("mode", "") or ""),
+            }
+            changed = True
+        if not changed:
+            self.index = self._normalize_index(self.index)
+            return
+        merged_queries = sorted(
+            entries_by_id.values(),
+            key=lambda entry: str(entry.get("timestamp", "") or ""),
+        )
+        self._write_index_to_disk(
+            {
+                "total_queries": len(merged_queries),
+                "queries": merged_queries,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Core logging
@@ -115,6 +225,17 @@ class QueryLogger:
             ],
             "user_metadata": metadata or {},
         }
+        runtime_metadata = self._extract_runtime_metadata(metadata or {})
+        if runtime_metadata:
+            meta["runtime_metadata"] = runtime_metadata
+            if runtime_metadata.get("suite_name"):
+                meta["suite_name"] = runtime_metadata["suite_name"]
+        latest_scorecard = self.get_latest_scorecard_summary()
+        if latest_scorecard:
+            meta["recent_scorecard"] = latest_scorecard
+        query_plan_summary = self._summarize_query_plan(result.get("query_plan"))
+        if query_plan_summary:
+            meta["query_plan_summary"] = query_plan_summary
         (query_dir / "metadata.json").write_text(
             json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -152,6 +273,7 @@ class QueryLogger:
         evidence_data = {
             "retrieved_content": result.get("retrieved_content", []),
             "retrieved_text": result.get("retrieved_text", ""),
+            "retrieval_diagnostics": result.get("retrieval_diagnostics", []),
             "web_search_results": result.get("web_search_results", []),
         }
         (query_dir / "evidence.json").write_text(
@@ -176,8 +298,7 @@ class QueryLogger:
             )
 
         # ── Update global index ─────────────────────────────────────
-        self.index["total_queries"] += 1
-        self.index["queries"].append(
+        self._append_index_entry(
             {
                 "query_id": query_id,
                 "timestamp": timestamp.isoformat(),
@@ -187,10 +308,96 @@ class QueryLogger:
                 "mode": result.get("mode", ""),
             }
         )
-        self._save_index()
 
         print(f"[QueryLogger] Logged query: {query_id}  →  {query_dir}")
         return query_id
+
+    @staticmethod
+    def _extract_runtime_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+        runtime_keys = (
+            "git_sha",
+            "model",
+            "base_url",
+            "doctor_summary",
+            "network_notes",
+            "suite_name",
+        )
+        return {
+            key: metadata[key]
+            for key in runtime_keys
+            if str(metadata.get(key, "") or "").strip()
+        }
+
+    def save_scorecard_summary(
+        self,
+        summary: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        timestamp = datetime.now().isoformat()
+        payload = {
+            "timestamp": timestamp,
+            "summary": dict(summary or {}),
+            "metadata": dict(metadata or {}),
+        }
+        scorecard_dir = self.log_dir / "scorecards"
+        scorecard_dir.mkdir(parents=True, exist_ok=True)
+        timestamped_path = scorecard_dir / (
+            f"scorecard_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
+        )
+        latest_path = self.log_dir / "latest_scorecard.json"
+        rendered = json.dumps(payload, indent=2, ensure_ascii=False)
+        timestamped_path.write_text(rendered, encoding="utf-8")
+        latest_path.write_text(rendered, encoding="utf-8")
+        return str(latest_path)
+
+    def get_latest_scorecard_summary(self) -> Optional[Dict[str, Any]]:
+        latest_path = self.log_dir / "latest_scorecard.json"
+        if not latest_path.exists():
+            return None
+        return json.loads(latest_path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _summarize_query_plan(query_plan: Any) -> Dict[str, Any]:
+        if not query_plan:
+            return {}
+
+        def _read(value: Any, key: str, default: Any = None) -> Any:
+            if isinstance(value, dict):
+                return value.get(key, default)
+            return getattr(value, key, default)
+
+        primary_task = _read(query_plan, "primary_task", {}) or {}
+        supporting_tasks = list(_read(query_plan, "supporting_tasks", []) or [])
+        answer_contract = _read(query_plan, "answer_contract", {}) or {}
+        knowhow_hints = list(_read(query_plan, "knowhow_hints", []) or [])
+
+        summary = {
+            "plan_type": str(_read(query_plan, "plan_type", "") or "").strip(),
+            "question_type": str(_read(query_plan, "question_type", "") or "").strip(),
+            "primary_task_type": str(_read(primary_task, "task_type", "") or "").strip(),
+            "supporting_task_types": [
+                str(_read(task, "task_type", "") or "").strip()
+                for task in supporting_tasks
+                if str(_read(task, "task_type", "") or "").strip()
+            ],
+            "answer_section_order": list(_read(answer_contract, "section_order", []) or []),
+            "knowhow_doc_ids": list(_read(query_plan, "knowhow_doc_ids", []) or []),
+            "knowhow_hints": [
+                {
+                    "doc_id": str(_read(hint, "doc_id", "") or "").strip(),
+                    "task_id": str(_read(hint, "task_id", "") or "").strip(),
+                    "task_type": str(_read(hint, "task_type", "") or "").strip(),
+                    "declared_by_skills": [
+                        str(value).strip()
+                        for value in list(_read(hint, "declared_by_skills", []) or [])
+                        if str(value).strip()
+                    ],
+                }
+                for hint in knowhow_hints
+                if str(_read(hint, "doc_id", "") or "").strip()
+            ],
+        }
+        return {key: value for key, value in summary.items() if value not in ({}, [], "")}
 
     # ------------------------------------------------------------------
     # Retrieval

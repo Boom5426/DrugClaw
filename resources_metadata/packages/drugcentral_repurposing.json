@@ -1,0 +1,18 @@
+{
+  "package_id": "drugcentral_repurposing",
+  "skill_name": "DrugCentral",
+  "dataset_bundle": [
+    "resources_metadata/drug_knowledgebase/DrugCentral/structures.smiles.tsv",
+    "resources_metadata/drug_knowledgebase/DrugCentral/drug.target.interaction.tsv",
+    "resources_metadata/drug_knowledgebase/DrugCentral/FDA+EMA+PMDA_Approved.csv"
+  ],
+  "protocol_docs": [
+    "resources_metadata/packages/drugcentral_protocol.md"
+  ],
+  "how_to_docs": [
+    "resources_metadata/packages/drugcentral_how_to.md"
+  ],
+  "knowhow_docs": [
+    "resources_metadata/knowhow/drug_repurposing/repurposing_evidence_thresholds.md"
+  ]
+}

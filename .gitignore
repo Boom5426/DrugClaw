@@ -4,10 +4,27 @@ api_keys.json
 navigator_api_keys.json
 build/
 drugclaw.egg-info/
+.coverage
+.coverage.*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+.cache/
+htmlcov/
+coverage.xml
+.idea/
+.vscode/
+.codex
+.codex/
 query_logs/
 self_bench_logs/
 .worktrees/
 resources_metadata/**
+!resources_metadata/packages/
+!resources_metadata/packages/**
 # Only commit curated minimal fixtures needed by examples/tests.
 !resources_metadata/drug_combination/
 !resources_metadata/drug_combination/CDCDB/
@@ -82,3 +99,10 @@ resources_metadata/**
 !resources_metadata/dti/DTC/DTC_data.csv
 !resources_metadata/dti/TarKG/
 !resources_metadata/dti/TarKG/tarkg.tsv
+
+# Developer-only source trees.
+# These rules only affect new untracked files; currently tracked files under
+# these paths remain versioned until explicitly removed from the git index.
+tests/
+self_bench/
+docs/

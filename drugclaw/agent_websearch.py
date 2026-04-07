@@ -5,6 +5,9 @@ with web search across drug literature, clinical publications, and pharmacology 
 from typing import List, Dict, Any, Optional
 from .models import AgentState
 from .llm_client import LLMClient
+from .query_plan import infer_question_type_from_query, normalize_question_type
+from .web_query_policy import build_simple_search_queries, filter_results_for_question_type
+from .web_evidence import summarize_web_results
 import json
 import requests
 import time
@@ -559,6 +562,38 @@ Provide summary in this JSON format:
             )
         
         return state
+
+    def execute_simple(self, state: AgentState) -> AgentState:
+        """Simple-mode web lane: always retrieve authority-filtered web evidence."""
+        query = state.original_query
+        plan = getattr(state, "query_plan", None)
+        question_type = normalize_question_type(
+            getattr(plan, "question_type", "") or infer_question_type_from_query(query)
+        )
+        candidate_entities = self._flatten_plan_entities(getattr(plan, "entities", {}) or {})
+
+        search_queries = build_simple_search_queries(
+            query=query,
+            question_type=question_type,
+            candidate_entities=candidate_entities,
+        )
+        all_results = self._execute_searches(search_queries)
+        filtered_results = filter_results_for_question_type(
+            question_type,
+            all_results,
+            query=query,
+            candidate_entities=candidate_entities,
+        )
+
+        state.web_search_results = filtered_results
+        if filtered_results:
+            summary_lines = summarize_web_results(filtered_results)
+            web_block = "\n".join(["Web Evidence:"] + summary_lines)
+            if state.retrieved_text.strip():
+                state.retrieved_text = f"{state.retrieved_text}\n\n{web_block}"
+            else:
+                state.retrieved_text = web_block
+        return state
     
     def _should_search(self, state: AgentState) -> bool:
         """Determine if web search is needed"""
@@ -631,6 +666,20 @@ Provide summary in this JSON format:
         entities = [e for e in set(entities) if e not in common_words]
         
         return entities[:10]
+
+    @staticmethod
+    def _flatten_plan_entities(entities: Dict[str, Any]) -> List[str]:
+        flattened: List[str] = []
+        for values in (entities or {}).values():
+            if isinstance(values, str):
+                values = [values]
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                text = str(value).strip()
+                if text and text not in flattened:
+                    flattened.append(text)
+        return flattened
     
     def _generate_search_queries(
         self,
@@ -707,12 +756,20 @@ Provide summary in this JSON format:
             if self._web_skill is not None:
                 # Primary path: WebSearchSkill (DuckDuckGo + PubMed)
                 try:
-                    rr_list = self._web_skill.search(query_str, max_results=6)
+                    search_with_source = getattr(self._web_skill, "search_with_source", None)
+                    if callable(search_with_source):
+                        rr_list = search_with_source(
+                            query_str,
+                            source=query_info.get("source"),
+                            max_results=6,
+                        )
+                    else:
+                        rr_list = self._web_skill.search(query_str, max_results=6)
                     for rr in rr_list:
                         meta = rr.metadata or {}
                         all_results.append({
                             "title":   meta.get("title", rr.target_entity),
-                            "url":     (rr.sources or [""])[0],
+                            "url":     meta.get("url") or (rr.sources or [""])[0],
                             "snippet": rr.evidence_text,
                             "source":  rr.source,
                             "metadata": meta,

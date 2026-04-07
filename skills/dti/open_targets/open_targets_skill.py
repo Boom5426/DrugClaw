@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import urllib.request
 from typing import Any, Dict, List, Optional
 
@@ -58,17 +59,87 @@ class OpenTargetsSkill(RAGSkill):
     ) -> List[RetrievalResult]:
         drugs = entities.get("drug", [])
         results: List[RetrievalResult] = []
+        include_indications = self._query_requests_indications(query)
+        include_mechanisms = (
+            not include_indications
+            or self._query_requests_mechanisms(query)
+            or not str(query).strip()
+        )
 
         for drug in drugs:
             if len(results) >= max_results:
                 break
             results.extend(
-                self._search_drug(drug, max_results - len(results))
+                self._search_drug(
+                    drug,
+                    max_results - len(results),
+                    include_mechanisms=include_mechanisms,
+                    include_indications=include_indications,
+                )
             )
 
         return results
 
-    def _search_drug(self, drug_name: str, limit: int) -> List[RetrievalResult]:
+    @staticmethod
+    def _query_requests_indications(query: str) -> bool:
+        lowered = str(query).strip().lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "indication",
+                "indications",
+                "approved",
+                "repurposing",
+                "repositioning",
+                "treat",
+                "therapy",
+                "disease",
+            )
+        )
+
+    @staticmethod
+    def _query_requests_mechanisms(query: str) -> bool:
+        lowered = str(query).strip().lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "target",
+                "targets",
+                "mechanism",
+                "mechanism of action",
+                "moa",
+            )
+        )
+
+    @staticmethod
+    def _stage_rank(stage: str) -> int:
+        normalized = str(stage or "").strip().upper()
+        rank_map = {
+            "APPROVAL": 100,
+            "PHASE_4": 90,
+            "PHASE_3": 80,
+            "PHASE_2_3": 75,
+            "PHASE_2": 70,
+            "PHASE_1_2": 65,
+            "PHASE_1": 60,
+            "EARLY_PHASE_1": 50,
+            "UNKNOWN": 0,
+        }
+        if normalized in rank_map:
+            return rank_map[normalized]
+        match = re.search(r"PHASE_(\d)", normalized)
+        if match:
+            return int(match.group(1)) * 10
+        return 0
+
+    def _search_drug(
+        self,
+        drug_name: str,
+        limit: int,
+        *,
+        include_mechanisms: bool,
+        include_indications: bool,
+    ) -> List[RetrievalResult]:
         """Search for drug and retrieve its targets via Open Targets GraphQL."""
         # Step 1: search for drug by name to get ChEMBL ID
         search_query = """
@@ -91,14 +162,13 @@ class OpenTargetsSkill(RAGSkill):
         if not drug_id:
             return []
 
-        # Step 2: get drug's known targets (mechanisms of action)
-        moa_query = """
-        {
-          drug(chemblId: "%s") {
-            id
-            name
+        field_blocks: List[str] = []
+        if include_mechanisms:
+            field_blocks.append(
+                """
             mechanismsOfAction {
               rows {
+                mechanismOfAction
                 actionType
                 targets {
                   id
@@ -107,79 +177,135 @@ class OpenTargetsSkill(RAGSkill):
                 }
               }
             }
-            linkedTargets {
+                """.rstrip()
+            )
+        if include_indications:
+            field_blocks.append(
+                """
+            indications {
               rows {
-                id
-                approvedName
-                approvedSymbol
+                disease {
+                  id
+                  name
+                }
+                maxClinicalStage
               }
             }
+                """.rstrip()
+            )
+        if not field_blocks:
+            field_blocks.append(
+                """
+            mechanismsOfAction {
+              rows {
+                mechanismOfAction
+                actionType
+                targets {
+                  id
+                  approvedName
+                  approvedSymbol
+                }
+              }
+            }
+                """.rstrip()
+            )
+
+        drug_query = """
+        {
+          drug(chemblId: "%s") {
+            id
+            name
+%s
           }
         }
-        """ % drug_id
+        """ % (drug_id, "\n".join(field_blocks))
 
-        moa_data = self._graphql(moa_query, ["drug"])
-        if not moa_data:
+        drug_data = self._graphql(drug_query, ["drug"])
+        if not drug_data:
             return []
-        drug_info = moa_data[0] if isinstance(moa_data, list) else moa_data
+        drug_info = drug_data[0] if isinstance(drug_data, list) else drug_data
 
         results: List[RetrievalResult] = []
 
         # Mechanisms of action
-        for row in (drug_info.get("mechanismsOfAction") or {}).get("rows", []):
-            action_type = row.get("actionType", "targets").lower().replace(" ", "_")
-            for tgt in row.get("targets", []):
+        if include_mechanisms:
+            for row in (drug_info.get("mechanismsOfAction") or {}).get("rows", []):
+                mechanism = row.get("mechanismOfAction", "").strip()
+                action_type = row.get("actionType", "targets").lower().replace(" ", "_")
+                for tgt in row.get("targets", []):
+                    if len(results) >= limit:
+                        break
+                    tgt_name = tgt.get("approvedName") or tgt.get("approvedSymbol", "")
+                    if not tgt_name:
+                        continue
+                    evidence_text = (
+                        f"{canonical_name} {action_type} {tgt_name} "
+                        f"(Open Targets MoA)"
+                    )
+                    if mechanism:
+                        evidence_text = (
+                            f"{canonical_name} {action_type} {tgt_name} "
+                            f"via {mechanism} (Open Targets MoA)"
+                        )
+                    results.append(RetrievalResult(
+                        source_entity=canonical_name,
+                        source_type="drug",
+                        target_entity=tgt_name,
+                        target_type="protein",
+                        relationship=action_type,
+                        weight=1.0,
+                        source="Open Targets Platform",
+                        skill_category="dti",
+                        evidence_text=evidence_text,
+                        metadata={
+                            "chembl_id": drug_id,
+                            "target_id": tgt.get("id", ""),
+                            "gene_symbol": tgt.get("approvedSymbol", ""),
+                            "mechanism_of_action": mechanism,
+                        },
+                    ))
+
+        if include_indications and len(results) < limit:
+            indication_rows = list((drug_info.get("indications") or {}).get("rows", []))
+            indication_rows.sort(
+                key=lambda row: (
+                    -self._stage_rank(row.get("maxClinicalStage", "")),
+                    str((row.get("disease") or {}).get("name", "")).lower(),
+                )
+            )
+            seen_diseases = set()
+            for row in indication_rows:
                 if len(results) >= limit:
                     break
-                tgt_name = tgt.get("approvedName") or tgt.get("approvedSymbol", "")
-                if not tgt_name:
+                disease = row.get("disease") or {}
+                disease_name = str(disease.get("name") or "").strip()
+                if not disease_name:
                     continue
+                disease_key = disease_name.lower()
+                if disease_key in seen_diseases:
+                    continue
+                seen_diseases.add(disease_key)
+                stage = str(row.get("maxClinicalStage") or "UNKNOWN").strip().upper()
+                relationship = "indicated_for" if stage == "APPROVAL" else "investigated_for"
                 results.append(RetrievalResult(
                     source_entity=canonical_name,
                     source_type="drug",
-                    target_entity=tgt_name,
-                    target_type="protein",
-                    relationship=action_type,
+                    target_entity=disease_name,
+                    target_type="disease",
+                    relationship=relationship,
                     weight=1.0,
                     source="Open Targets Platform",
                     skill_category="dti",
                     evidence_text=(
-                        f"{canonical_name} {action_type} {tgt_name} "
-                        f"(Open Targets MoA)"
+                        f"{canonical_name} {relationship} {disease_name} "
+                        f"(Open Targets max stage {stage})"
                     ),
                     metadata={
                         "chembl_id": drug_id,
-                        "target_id": tgt.get("id", ""),
-                        "gene_symbol": tgt.get("approvedSymbol", ""),
+                        "disease_id": disease.get("id", ""),
+                        "max_clinical_stage": stage,
                     },
                 ))
-
-        # Linked targets (broader set)
-        for tgt in (drug_info.get("linkedTargets") or {}).get("rows", []):
-            if len(results) >= limit:
-                break
-            tgt_name = tgt.get("approvedName") or tgt.get("approvedSymbol", "")
-            if not tgt_name:
-                continue
-            # Avoid duplicates
-            if any(r.target_entity == tgt_name for r in results):
-                continue
-            results.append(RetrievalResult(
-                source_entity=canonical_name,
-                source_type="drug",
-                target_entity=tgt_name,
-                target_type="protein",
-                relationship="linked_target",
-                weight=1.0,
-                source="Open Targets Platform",
-                skill_category="dti",
-                evidence_text=f"{canonical_name} linked to target {tgt_name}",
-                metadata={
-                    "chembl_id": drug_id,
-                    "target_id": tgt.get("id", ""),
-                    "gene_symbol": tgt.get("approvedSymbol", ""),
-                },
-            ))
 
         return results
 
@@ -233,14 +359,19 @@ class OpenTargetsSkill(RAGSkill):
                 structured_payload={
                     "chembl_id": metadata.get("chembl_id", ""),
                     "target_id": metadata.get("target_id", ""),
+                    "disease_id": metadata.get("disease_id", ""),
                     "gene_symbol": metadata.get("gene_symbol", ""),
+                    "mechanism_of_action": metadata.get("mechanism_of_action", ""),
+                    "max_clinical_stage": metadata.get("max_clinical_stage", ""),
                     "relationship": relationship,
                 },
                 claim=f"{source_entity} {relationship} {target_entity}".strip(),
                 evidence_kind="model_prediction" if predictive else "database_record",
                 support_direction="supports",
                 confidence=0.0,
-                retrieval_score=0.55 if predictive else 0.78,
+                retrieval_score=0.55 if predictive else (
+                    0.84 if metadata.get("max_clinical_stage") == "APPROVAL" else 0.78
+                ),
                 timestamp="2026-03-18T00:00:00Z",
                 metadata={
                     "skill_category": self.subcategory,
@@ -248,7 +379,9 @@ class OpenTargetsSkill(RAGSkill):
                     "relationship": relationship,
                     "target_entity": target_entity,
                     "source_type": "drug",
-                    "target_type": "protein",
+                    "target_type": record.get("target_type", "protein"),
+                    "mechanism_of_action": metadata.get("mechanism_of_action", ""),
+                    "max_clinical_stage": metadata.get("max_clinical_stage", ""),
                 },
             )
             item.confidence = score_evidence_item(item)

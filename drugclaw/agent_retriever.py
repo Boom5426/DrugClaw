@@ -13,14 +13,22 @@ or results go directly as text to the Responder Agent (simple mode).
 import re
 from typing import List, Dict, Any, Optional
 
+from .knowhow_registry import KnowHowRegistry
+from .knowhow_retriever import KnowHowRetriever
 from .models import AgentState
 from .llm_client import LLMClient
 from .query_plan import (
     QueryPlan,
     build_fallback_query_plan,
+    infer_entities_from_query,
+    infer_question_type_from_query,
     is_direct_target_lookup,
     normalize_question_type,
+    normalize_task_type,
+    preferred_skills_for_question_type,
+    preferred_skills_for_task_type,
     prioritize_target_lookup_skills,
+    uses_fallback_preferred_skills,
 )
 from .skills.registry import SkillRegistry
 from .agent_coder import CoderAgent
@@ -43,6 +51,8 @@ class RetrieverAgent:
         coder_agent: Optional[CoderAgent] = None,
         resource_registry=None,
         entity_resolver: Optional[EntityResolver] = None,
+        knowhow_registry: KnowHowRegistry | None = None,
+        knowhow_retriever: KnowHowRetriever | None = None,
     ):
         self.llm = llm_client
         self.skill_registry = skill_registry
@@ -51,6 +61,10 @@ class RetrieverAgent:
         self.entity_resolver = entity_resolver or EntityResolver(
             skill_registry=skill_registry,
             llm_client=llm_client,
+        )
+        self.knowhow_registry = knowhow_registry or KnowHowRegistry()
+        self.knowhow_retriever = knowhow_retriever or KnowHowRetriever(
+            self.knowhow_registry
         )
 
     # ------------------------------------------------------------------
@@ -191,9 +205,12 @@ Provide your plan in JSON format:
                 ),
                 resource_filter=resource_filter,
             )
+            planner_output = self._attach_knowhow(planner_output)
             state.query_plan = planner_output
 
         if isinstance(planner_output, QueryPlan):
+            planner_output = self._attach_knowhow(planner_output)
+            state.query_plan = planner_output
             query_plan = self._query_plan_to_retrieval_plan(
                 planner_output,
                 query=state.original_query,
@@ -207,11 +224,11 @@ Provide your plan in JSON format:
                 query_plan.get("key_entities", {}),
                 resolved_entities,
             )
-            state.query_plan = self._build_resource_filter_query_plan(
+            state.query_plan = self._attach_knowhow(self._build_resource_filter_query_plan(
                 effective_query,
                 key_entities=query_plan.get("key_entities", {}),
                 resource_filter=resource_filter,
-            )
+            ))
         else:
             query_plan = self._get_query_plan(
                 effective_query, omics_str, state.iteration,
@@ -229,6 +246,8 @@ Provide your plan in JSON format:
                 state.query_plan.entities,
                 resolved_entities,
             )
+        if not key_entities:
+            key_entities = infer_entities_from_query(effective_query)
 
         # Backward compat: also check query_plan list for skill names
         if not selected_skills:
@@ -238,11 +257,15 @@ Provide your plan in JSON format:
                 if step.get("database")
             ]
 
+        selected_skills = self._filter_available_skills(selected_skills)
+
         print(f"[Retriever Agent] Selected skills: {selected_skills}")
         print(f"[Retriever Agent] Key entities: {key_entities}")
 
         # Normalize entities for Code Agent
         entities = self._normalize_entities_for_coder(key_entities)
+        if not entities:
+            entities = infer_entities_from_query(effective_query)
 
         # Fuzzy-resolve entities: expand with close matches / LLM variants
         if entities:
@@ -294,7 +317,10 @@ Provide your plan in JSON format:
             coder_result, selected_skills, effective_query,
         )
         state.retrieval_diagnostics = self._build_retrieval_diagnostics(
-            coder_result, selected_skills,
+            coder_result,
+            selected_skills,
+        ) + self._build_knowhow_diagnostics(
+            getattr(state, "query_plan", None)
         )
         state.code_agent_code = "\n---\n".join(
             f"# Skill: {name}\n{info.get('code', '')}"
@@ -371,16 +397,38 @@ Provide your plan in JSON format:
         question_type = normalize_question_type(getattr(plan, "question_type", ""))
         direct_question_type = (
             is_direct_target_lookup(query=effective_query, question_type=question_type)
-            or any(marker in question_type for marker in ("label", "retrieval"))
+            or any(
+                marker in question_type
+                for marker in (
+                    "label",
+                    "retrieval",
+                    "pharmacogenomics",
+                    "pgx",
+                    "repurposing",
+                    "mechanism",
+                    "adr",
+                )
+            )
         )
         direct_query_shape = has_drug_entity and any(
             marker in effective_query
             for marker in (
                 "target",
                 "targets",
+                "mechanism",
+                "mechanism of action",
+                " moa",
                 "label",
                 "prescribing",
                 "information",
+                "approved indication",
+                "approved indications",
+                "repurposing",
+                "repositioning",
+                "safety risk",
+                "safety risks",
+                "adverse reaction",
+                "adverse reactions",
             )
         )
         if (
@@ -389,8 +437,14 @@ Provide your plan in JSON format:
             and (direct_question_type or direct_query_shape)
             and not getattr(plan, "requires_graph_reasoning", False)
         ):
-            return "direct_retrieve"
+            return "deterministic_only"
         return "auto"
+
+    def _attach_knowhow(self, plan: QueryPlan) -> QueryPlan:
+        try:
+            return self.knowhow_retriever.enrich_query_plan(plan)
+        except Exception:
+            return plan
 
     def _query_plan_to_retrieval_plan(
         self,
@@ -399,26 +453,200 @@ Provide your plan in JSON format:
         *,
         resource_filter: List[str],
     ) -> Dict[str, Any]:
+        normalized_question_type = normalize_question_type(plan.question_type)
+        is_target_lookup = is_direct_target_lookup(
+            query=query,
+            question_type=plan.question_type,
+        )
+        selected_skill_limit = 4 if is_target_lookup else 3
+        if normalized_question_type == "drug_repurposing":
+            selected_skill_limit = 4
+        task_order_skill_hints = self._task_order_skill_hints(plan)
+        if plan.plan_type == "composite_query" and task_order_skill_hints:
+            plan_skill_hints = task_order_skill_hints
+        else:
+            plan_skill_hints = (
+                preferred_skills_for_question_type(normalized_question_type)
+                if uses_fallback_preferred_skills(normalized_question_type)
+                else list(plan.preferred_skills)
+            )
+
         if resource_filter:
             selected_skills = self._filter_available_skills(list(resource_filter))
+        elif normalized_question_type == "drug_repurposing":
+            selected_skills = self._select_repurposing_skills(selected_skill_limit)
+        elif plan.plan_type == "composite_query":
+            selected_skills = self._select_composite_skills(plan, max(selected_skill_limit, 4))
+        elif (
+            uses_fallback_preferred_skills(normalized_question_type)
+            and normalized_question_type != "drug_repurposing"
+        ):
+            selected_skills = self._filter_available_skills(plan_skill_hints)[:3]
         else:
-            combined_skill_hints = list(plan.preferred_skills) + list(
-                self.skill_registry.get_skills_for_query(query)
+            explicit_plan_skills = self._filter_available_skills(plan_skill_hints)
+            use_plan_skills_exclusively = bool(
+                explicit_plan_skills
+                and plan_skill_hints
+                and not is_direct_target_lookup(
+                    query=query,
+                    question_type=plan.question_type,
+                )
             )
-            combined_skill_hints = self._apply_query_skill_policy(
-                combined_skill_hints,
-                query=query,
-                question_type=plan.question_type,
-            )
-            selected_skills = self._filter_available_skills(combined_skill_hints)
-            if selected_skills:
-                selected_skills = selected_skills[:3]
+            if use_plan_skills_exclusively:
+                selected_skills = explicit_plan_skills[:3]
+            else:
+                combined_skill_hints = plan_skill_hints + list(
+                    self.skill_registry.get_skills_for_query(query)
+                )
+                combined_skill_hints = self._apply_query_skill_policy(
+                    combined_skill_hints,
+                    query=query,
+                    question_type=plan.question_type,
+                )
+                selected_skills = self._filter_available_skills(combined_skill_hints)
+                if selected_skills:
+                    selected_skills = selected_skills[:selected_skill_limit]
+
+        if is_target_lookup and selected_skills:
+            selected_skills = prioritize_target_lookup_skills(selected_skills)[
+                :selected_skill_limit
+            ]
 
         return {
             "key_entities": dict(plan.entities),
             "selected_skills": selected_skills,
+            "selected_knowhow_doc_ids": list(plan.knowhow_doc_ids),
+            "selected_knowhow_hints": list(plan.knowhow_hints),
             "reasoning": "; ".join(plan.notes),
         }
+
+    def _select_repurposing_skills(self, selected_skill_limit: int) -> List[str]:
+        primary_repurposing_sources = ["RepoDB"]
+        primary_indication_sources = ["DrugCentral", "DrugBank"]
+        fallback_repurposing_sources = ["DrugRepoBank", "RepurposeDrugs", "OREGANO"]
+        secondary_official_sources = ["openFDA Human Drug", "DailyMed"]
+
+        primary_repurposing = self._filter_available_skills(primary_repurposing_sources)
+        primary_indications = self._filter_available_skills(primary_indication_sources)
+        fallback_repurposing = self._filter_available_skills(fallback_repurposing_sources)
+        secondary_official = self._filter_available_skills(secondary_official_sources)
+
+        selected: List[str] = []
+        for skill_name in primary_repurposing + primary_indications:
+            if skill_name in selected:
+                continue
+            selected.append(skill_name)
+            if len(selected) >= selected_skill_limit:
+                return selected[:selected_skill_limit]
+
+        has_repurposing = any(
+            skill_name in primary_repurposing_sources + fallback_repurposing_sources
+            for skill_name in selected
+        )
+        has_indications = any(
+            skill_name in primary_indication_sources + secondary_official_sources
+            for skill_name in selected
+        )
+
+        if not has_repurposing:
+            for skill_name in fallback_repurposing:
+                if skill_name in selected:
+                    continue
+                selected.append(skill_name)
+                if len(selected) >= selected_skill_limit:
+                    return selected[:selected_skill_limit]
+
+        if not has_indications:
+            official_limit = 1 if selected else selected_skill_limit
+            added_official = 0
+            for skill_name in secondary_official:
+                if skill_name in selected:
+                    continue
+                selected.append(skill_name)
+                added_official += 1
+                if added_official >= official_limit:
+                    return selected[:selected_skill_limit]
+                if len(selected) >= selected_skill_limit:
+                    return selected[:selected_skill_limit]
+
+        return selected[:selected_skill_limit]
+
+    def _select_composite_skills(
+        self,
+        plan: QueryPlan,
+        selected_skill_limit: int,
+    ) -> List[str]:
+        selected: List[str] = []
+        primary_task = getattr(plan, "primary_task", None)
+        supporting_tasks = list(getattr(plan, "supporting_tasks", []) or [])
+        primary_task_type = normalize_task_type(getattr(primary_task, "task_type", ""))
+
+        primary_candidates = list(getattr(primary_task, "preferred_skills", []) or [])
+        if not primary_candidates:
+            primary_candidates = preferred_skills_for_task_type(primary_task_type)
+
+        has_labeling_support = any(
+            normalize_task_type(getattr(task, "task_type", "")) == "labeling_summary"
+            for task in supporting_tasks
+        )
+        primary_quota = max(1, selected_skill_limit - len(supporting_tasks))
+        if primary_task_type == "major_adrs" and has_labeling_support:
+            primary_quota = max(1, selected_skill_limit - 1)
+
+        for skill_name in self._filter_available_skills(primary_candidates):
+            if skill_name in selected:
+                continue
+            selected.append(skill_name)
+            if len(selected) >= primary_quota:
+                break
+
+        for task in supporting_tasks:
+            task_type = normalize_task_type(getattr(task, "task_type", ""))
+            support_candidates = list(getattr(task, "preferred_skills", []) or [])
+            if not support_candidates:
+                support_candidates = preferred_skills_for_task_type(task_type)
+            if primary_task_type == "major_adrs" and task_type == "labeling_summary":
+                support_candidates = [
+                    "openFDA Human Drug",
+                    "DailyMed",
+                    "MedlinePlus Drug Info",
+                ] + support_candidates
+            for skill_name in self._filter_available_skills(list(dict.fromkeys(support_candidates))):
+                if skill_name in selected:
+                    continue
+                selected.append(skill_name)
+                break
+            if len(selected) >= selected_skill_limit:
+                return selected[:selected_skill_limit]
+
+        if len(selected) < selected_skill_limit:
+            for skill_name in self._filter_available_skills(self._task_order_skill_hints(plan)):
+                if skill_name in selected:
+                    continue
+                selected.append(skill_name)
+                if len(selected) >= selected_skill_limit:
+                    break
+
+        return selected[:selected_skill_limit]
+
+    @staticmethod
+    def _task_order_skill_hints(plan: QueryPlan) -> List[str]:
+        ordered: List[str] = []
+        tasks = [getattr(plan, "primary_task", None)] + list(
+            getattr(plan, "supporting_tasks", []) or []
+        )
+        for task in tasks:
+            if task is None:
+                continue
+            task_skills = list(getattr(task, "preferred_skills", []) or [])
+            if not task_skills:
+                task_skills = preferred_skills_for_task_type(
+                    getattr(task, "task_type", "")
+                )
+            for skill_name in task_skills:
+                if skill_name not in ordered:
+                    ordered.append(skill_name)
+        return ordered
 
     @staticmethod
     def _apply_query_skill_policy(
@@ -439,12 +667,39 @@ Provide your plan in JSON format:
             return []
 
         prioritized = self._prioritize_skill_names(skill_names, ready_only=True)
-        if prioritized:
-            return prioritized
+        available_ready = self._filter_runtime_executable_skills(
+            prioritized,
+            ready_only=True,
+        )
+        all_available = self._filter_runtime_executable_skills(
+            self._prioritize_skill_names(skill_names, ready_only=False),
+            ready_only=False,
+        )
+        if not available_ready:
+            return all_available
 
-        skill_names = self._prioritize_skill_names(skill_names, ready_only=False)
+        merged = list(available_ready)
+        for skill_name in all_available:
+            if skill_name not in merged:
+                merged.append(skill_name)
+        return merged
+
+    def _filter_runtime_executable_skills(
+        self,
+        skill_names: List[str],
+        *,
+        ready_only: bool,
+    ) -> List[str]:
         available: List[str] = []
-        for skill_name in skill_names:
+        for skill_name in list(dict.fromkeys(skill_names)):
+            entry = self._get_resource_entry(skill_name)
+            if entry is not None:
+                status = str(getattr(entry, "status", "ready") or "ready")
+                if ready_only and status != "ready":
+                    continue
+                if status in {"disabled", "missing_dependency"}:
+                    continue
+
             try:
                 skill = self.skill_registry.get_skill(skill_name)
             except Exception:
@@ -483,7 +738,7 @@ Provide your plan in JSON format:
 
         ranked = []
         for index, skill_name in enumerate(unique_names):
-            entry = getattr(self.resource_registry, "get_resource", lambda _: None)(skill_name)
+            entry = self._get_resource_entry(skill_name)
             if entry is None:
                 continue
             status = getattr(entry, "status", "")
@@ -497,8 +752,19 @@ Provide your plan in JSON format:
                     index,
                     skill_name,
                 )
-            )
+        )
         return [name for _, _, _, name in sorted(ranked)]
+
+    def _get_resource_entry(self, skill_name: str):
+        if self.resource_registry is None:
+            return None
+        get_resource = getattr(self.resource_registry, "get_resource", None)
+        if not callable(get_resource):
+            return None
+        try:
+            return get_resource(skill_name)
+        except Exception:
+            return None
 
     @staticmethod
     def _status_priority(status: str) -> int:
@@ -516,6 +782,7 @@ Provide your plan in JSON format:
         order = {
             "REST_API": 0,
             "CLI": 0,
+            "GATEWAY": 0,
             "LOCAL_FILE": 1,
             "DATASET": 2,
         }
@@ -548,10 +815,31 @@ Provide your plan in JSON format:
             if not isinstance(vals, list):
                 continue
 
-            cleaned = [str(value).strip() for value in vals if str(value).strip()]
+            cleaned: List[str] = []
+            for value in vals:
+                candidate_values = value if isinstance(value, (list, tuple, set)) else [value]
+                for candidate in candidate_values:
+                    normalized_value = RetrieverAgent._normalize_entity_value(candidate)
+                    if normalized_value and normalized_value not in cleaned:
+                        cleaned.append(normalized_value)
             if cleaned:
                 entities[canonical] = cleaned
         return entities
+
+    @staticmethod
+    def _normalize_entity_value(value: Any) -> str:
+        if isinstance(value, dict):
+            for key in ("name", "label", "entity", "value", "drug", "gene", "disease", "pathway"):
+                candidate = str(value.get(key, "")).strip()
+                if candidate:
+                    return candidate
+            for candidate in value.values():
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            return ""
+        if isinstance(value, (bytes, bytearray)):
+            return ""
+        return str(value).strip()
 
     def _get_query_plan(
         self, query: str, omics_str: str, iteration: int,
@@ -595,7 +883,11 @@ Respond in JSON:
         try:
             entities = self.llm.generate_json([{"role": "user", "content": entity_prompt}])
         except Exception:
-            entities = self._infer_entities_from_query(query)
+            entities = infer_entities_from_query(query)
+
+        entities = self._normalize_entities_for_coder(entities if isinstance(entities, dict) else {})
+        if not entities:
+            entities = infer_entities_from_query(query)
 
         return {
             "key_entities": entities,
@@ -613,12 +905,24 @@ Respond in JSON:
         fallback = build_fallback_query_plan(query)
         entities = self._normalize_entities_for_coder(key_entities)
         if not entities:
-            entities = self._infer_entities_from_query(query)
-        question_type = self._infer_question_type_from_query(query)
+            entities = infer_entities_from_query(query)
+        question_type = infer_question_type_from_query(query)
+        primary_task = fallback.primary_task.to_dict() if fallback.primary_task is not None else None
+        if primary_task is not None:
+            primary_task["entities"] = entities
+            primary_task["preferred_skills"] = list(resource_filter)
+
+        supporting_tasks = []
+        for task in fallback.supporting_tasks:
+            task_payload = task.to_dict()
+            task_payload["entities"] = entities
+            task_payload["preferred_skills"] = list(resource_filter)
+            supporting_tasks.append(task_payload)
+
         return QueryPlan(
             question_type=question_type or fallback.question_type,
             entities=entities,
-            subquestions=[query] if query else [],
+            subquestions=fallback.subquestions or ([query] if query else []),
             preferred_skills=list(resource_filter),
             preferred_evidence_types=[],
             requires_graph_reasoning=False,
@@ -626,36 +930,21 @@ Respond in JSON:
             requires_web_fallback=False,
             answer_risk_level="high" if question_type == "labeling" else fallback.answer_risk_level,
             notes=[f"resource_filter active: using {resource_filter}"],
+            plan_type=fallback.plan_type,
+            primary_task=primary_task,
+            supporting_tasks=supporting_tasks,
+            answer_contract=fallback.answer_contract.to_dict()
+            if fallback.answer_contract is not None
+            else None,
         )
 
     @staticmethod
     def _infer_question_type_from_query(query: str) -> str:
-        lowered = str(query).strip().lower()
-        if not lowered:
-            return "unknown"
-        if any(marker in lowered for marker in ("prescribing", "label", "safety", "warning", "contraindication")):
-            return "labeling"
-        if is_direct_target_lookup(query=lowered):
-            return "target_lookup"
-        return "unknown"
+        return infer_question_type_from_query(query)
 
     @staticmethod
     def _infer_entities_from_query(query: str) -> Dict[str, List[str]]:
-        lowered = str(query).strip().lower()
-        if not lowered:
-            return {}
-
-        for pattern in (
-            r"information\s+is\s+available\s+for\s+([a-z0-9\-]+)",
-            r"available\s+for\s+([a-z0-9\-]+)",
-            r"targets?\s+of\s+([a-z0-9\-]+)",
-            r"does\s+([a-z0-9\-]+)\s+target",
-            r"about\s+([a-z0-9\-]+)$",
-        ):
-            match = re.search(pattern, lowered)
-            if match:
-                return {"drug": [match.group(1)]}
-        return {}
+        return infer_entities_from_query(query)
 
     @staticmethod
     def _text_to_retrieved_content(
@@ -713,6 +1002,7 @@ Respond in JSON:
         diagnostics: List[Dict[str, Any]] = []
         for skill_name in skill_names:
             info = coder_result.get("per_skill", {}).get(skill_name, {})
+            nested = dict(info.get("diagnostics", {}) or {})
             diagnostics.append(
                 {
                     "skill": skill_name,
@@ -720,6 +1010,31 @@ Respond in JSON:
                     "error": info.get("error", ""),
                     "records": len(info.get("records", []) or []),
                     "output": info.get("output", ""),
+                    **nested,
+                }
+            )
+        return diagnostics
+
+    @staticmethod
+    def _build_knowhow_diagnostics(plan: Optional[QueryPlan]) -> List[Dict[str, Any]]:
+        if not isinstance(plan, QueryPlan):
+            return []
+
+        diagnostics: List[Dict[str, Any]] = []
+        for hint in list(getattr(plan, "knowhow_hints", []) or []):
+            if not isinstance(hint, dict):
+                continue
+            diagnostics.append(
+                {
+                    "kind": "knowhow",
+                    "task_id": str(hint.get("task_id", "")).strip(),
+                    "task_type": str(hint.get("task_type", "")).strip(),
+                    "doc_id": str(hint.get("doc_id", "")).strip(),
+                    "title": str(hint.get("title", "")).strip(),
+                    "risk_level": str(hint.get("risk_level", "")).strip(),
+                    "evidence_types": list(hint.get("evidence_types", []) or []),
+                    "declared_by_skills": list(hint.get("declared_by_skills", []) or []),
+                    "snippet": str(hint.get("snippet", "")).strip(),
                 }
             )
         return diagnostics

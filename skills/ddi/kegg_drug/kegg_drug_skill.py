@@ -28,6 +28,11 @@ _OFFLINE_FIXTURES = {
         ("dr:D00682", "dr:D01418", "P", "precaution with ibuprofen"),
     ]
 }
+_OFFLINE_DRUG_NAMES = {
+    "dr:D00682": "Warfarin",
+    "dr:D00109": "Aspirin",
+    "dr:D01418": "Ibuprofen",
+}
 
 
 class KEGGDrugSkill(CLISkillMixin, RAGSkill):
@@ -54,6 +59,7 @@ class KEGGDrugSkill(CLISkillMixin, RAGSkill):
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         RAGSkill.__init__(self, config)
         self._timeout = int(self.config.get("timeout", 20))
+        self._drug_name_cache: Dict[str, str] = {}
 
     def retrieve(
         self,
@@ -161,26 +167,57 @@ class KEGGDrugSkill(CLISkillMixin, RAGSkill):
             if len(parts) < 4:
                 continue
             source_id, target_id, label, description = parts[:4]
+            target_name = self._resolve_drug_name(target_id)
             results.append(RetrievalResult(
                 source_entity=drug,
                 source_type="drug",
-                target_entity=target_id,
+                target_entity=target_name or target_id,
                 target_type="drug_or_compound",
                 relationship="drug_drug_interaction",
                 weight=1.0,
                 source="KEGG Drug",
                 skill_category="ddi",
                 evidence_text=(
-                    f"KEGG Drug DDI: {source_id} interacts with {target_id} "
+                    f"KEGG Drug DDI: {source_id} interacts with {target_name or target_id} "
                     f"({label}; {description})"
                 ),
                 metadata={
                     "kegg_drug_id": drug_id,
                     "source_id": source_id,
                     "target_id": target_id,
+                    "target_name": target_name,
                     "ddi_label": label,
                     "ddi_description": description,
                     "access_via": "REST_ddi",
                 },
             ))
         return results
+
+    def _resolve_drug_name(self, drug_id: str) -> str:
+        normalized_id = str(drug_id or "").strip()
+        if not normalized_id:
+            return ""
+        if normalized_id in self._drug_name_cache:
+            return self._drug_name_cache[normalized_id]
+        offline_name = _OFFLINE_DRUG_NAMES.get(normalized_id)
+        if offline_name:
+            self._drug_name_cache[normalized_id] = offline_name
+            return offline_name
+
+        url = f"{_KEGG_REST}/get/{normalized_id}"
+        try:
+            with urllib.request.urlopen(url, timeout=self._timeout) as resp:
+                entry_text = resp.read().decode()
+        except Exception as exc:
+            logger.debug("KEGG REST: get failed for %s — %s", normalized_id, exc)
+            return ""
+
+        for line in entry_text.splitlines():
+            if not line.startswith("NAME"):
+                continue
+            name_block = line[len("NAME"):].strip()
+            primary_name = name_block.split(";", 1)[0].strip()
+            if primary_name:
+                self._drug_name_cache[normalized_id] = primary_name
+                return primary_name
+        return ""

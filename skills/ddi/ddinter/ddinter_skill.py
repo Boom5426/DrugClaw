@@ -25,7 +25,30 @@ _OFFLINE_FIXTURES = {
     "aspirin": [
         {"drug_a": "aspirin", "drug_b": "warfarin", "level": "Major", "mechanism": "Bleeding risk increased"},
         {"drug_a": "aspirin", "drug_b": "ibuprofen", "level": "Moderate", "mechanism": "Additive gastrointestinal toxicity"},
-    ]
+    ],
+    "warfarin": [
+        {
+            "drug_a": "warfarin",
+            "drug_b": "amiodarone",
+            "level": "Major",
+            "mechanism": "CYP2C9 inhibition may increase warfarin exposure and INR",
+            "management": "Monitor INR closely and consider warfarin dose reduction",
+        },
+        {
+            "drug_a": "warfarin",
+            "drug_b": "ibuprofen",
+            "level": "Major",
+            "mechanism": "Additive anticoagulant and gastrointestinal bleeding risk",
+            "management": "Avoid routine coadministration when possible; if used, monitor closely for bleeding",
+        },
+        {
+            "drug_a": "warfarin",
+            "drug_b": "metronidazole",
+            "level": "Major",
+            "mechanism": "Inhibits warfarin metabolism and raises INR",
+            "management": "Monitor INR closely and adjust the warfarin dose as needed",
+        },
+    ],
 }
 
 
@@ -73,9 +96,18 @@ class DDInterSkill(RAGSkill):
             drug_a = item.get("drug_a", item.get("drugA", drug))
             drug_b = item.get("drug_b", item.get("drugB", ""))
             level = item.get("level", item.get("severity", "unknown"))
-            mechanism = item.get("mechanism", "")
+            mechanism = self._text_value(item, "mechanism", "description", "effect")
+            management = self._text_value(
+                item,
+                "management",
+                "recommendation",
+                "recommendations",
+                "action",
+                "advice",
+            )
             if not drug_b:
                 continue
+            details = [detail for detail in (mechanism, management) if detail]
             results.append(RetrievalResult(
                 source_entity=drug_a,
                 source_type="drug",
@@ -87,8 +119,20 @@ class DDInterSkill(RAGSkill):
                 skill_category="ddi",
                 evidence_text=(
                     f"DDInter: {drug_a} ↔ {drug_b} [{level}]"
-                    + (f" — {mechanism}" if mechanism else "")
+                    + (f" — {'; '.join(details)}" if details else "")
                 ),
-                metadata={"severity": level, "mechanism": mechanism},
+                metadata={
+                    "severity": level,
+                    "mechanism": mechanism,
+                    "management": management,
+                },
             ))
         return results
+
+    @staticmethod
+    def _text_value(item: Dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = str(item.get(key, "")).strip()
+            if value:
+                return value
+        return ""

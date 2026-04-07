@@ -252,18 +252,58 @@ Return ONLY Python code."""
         """
         all_outputs: List[str] = []
         per_skill: Dict[str, Dict[str, Any]] = {}
+        normalized_strategy = self._normalize_execution_strategy(execution_strategy)
 
         for skill_name in skill_names:
             query_plan = ""
-            if execution_strategy == "direct_retrieve":
-                print(f"[Code Agent] Direct retrieve for skill: {skill_name}")
-                output, error, records = self._fallback_retrieve(
+            diagnostics = self._build_execution_diagnostics(
+                requested_strategy=execution_strategy,
+                applied_strategy=normalized_strategy,
+            )
+            if normalized_strategy == "deterministic_only":
+                print(f"[Code Agent] Deterministic retrieve for skill: {skill_name}")
+                output, error, records, diagnostics = self._run_deterministic_execution(
                     skill_name, entities, query, max_results_per_skill,
+                    diagnostics=diagnostics,
                 )
-                code = "(direct: skill.retrieve())"
-                strategy = "direct_retrieve"
+                code = "(deterministic: skill.retrieve())"
+                strategy = "deterministic_only"
+            elif normalized_strategy == "deterministic_first":
+                print(f"[Code Agent] Deterministic-first retrieve for skill: {skill_name}")
+                output, error, records, diagnostics = self._run_deterministic_execution(
+                    skill_name, entities, query, max_results_per_skill,
+                    diagnostics=diagnostics,
+                )
+                code = "(deterministic: skill.retrieve())"
+                strategy = "deterministic_first"
+
+                if diagnostics.get("final_status") != "success_structured":
+                    diagnostics["llm_attempted"] = True
+                    query_plan = ""
+                    skill_info = self.skill_registry.get_skill_info_for_coder(skill_name)
+                    query_plan, llm_code, llm_output, llm_error, llm_records = self._generate_and_run_for_skill(
+                        skill_name, skill_info, entities, query, max_results_per_skill,
+                    )
+                    if not llm_error:
+                        output = llm_output
+                        error = ""
+                        records = llm_records
+                        code = llm_code
+                        diagnostics["llm_plan_status"] = "success"
+                        diagnostics["llm_code_status"] = "success"
+                        diagnostics["llm_exec_status"] = "success"
+                        diagnostics["record_count"] = len(llm_records)
+                        diagnostics["text_available"] = bool(llm_output.strip())
+                        diagnostics["final_status"] = (
+                            "success_structured" if llm_records else "success_text_only"
+                        )
+                    else:
+                        diagnostics["llm_plan_status"] = "error"
+                        diagnostics["llm_code_status"] = "not_run"
+                        diagnostics["llm_exec_status"] = "not_run"
             else:
                 print(f"[Code Agent] Generating code for skill: {skill_name}")
+                diagnostics["llm_attempted"] = True
 
                 # Try the code-generation path first
                 skill_info = self.skill_registry.get_skill_info_for_coder(skill_name)
@@ -271,17 +311,26 @@ Return ONLY Python code."""
                     skill_name, skill_info, entities, query, max_results_per_skill,
                 )
                 strategy = "constrained_code"
+                diagnostics["llm_plan_status"] = "success" if query_plan else "error"
+                diagnostics["llm_code_status"] = "success" if code else "not_run"
+                diagnostics["llm_exec_status"] = "success" if not error else "error"
+                diagnostics["record_count"] = len(records)
+                diagnostics["text_available"] = bool(output.strip())
+                diagnostics["final_status"] = (
+                    "success_structured" if records else "empty"
+                )
 
                 if error:
                     # Constrained code path failed — fallback to retrieve.py / skill.retrieve()
                     print(f"[Code Agent] Code execution failed for {skill_name}, "
                           f"falling back to fixed retrieve.py (or skill.retrieve())")
-                    fallback_output, fallback_error, records = self._fallback_retrieve(
+                    fallback_output, fallback_error, records, diagnostics = self._run_deterministic_execution(
                         skill_name, entities, query, max_results_per_skill,
+                        diagnostics=diagnostics,
                     )
                     output = fallback_output
                     error = fallback_error
-                    code = "(fallback: retrieve.py)"
+                    code = "(fallback: deterministic execution)"
                     strategy = "fallback_retrieve"
 
             per_skill[skill_name] = {
@@ -291,6 +340,7 @@ Return ONLY Python code."""
                 "error": error,
                 "strategy": strategy,
                 "records": records,
+                "diagnostics": diagnostics,
             }
 
             if output.strip():
@@ -307,6 +357,39 @@ Return ONLY Python code."""
         return {
             "text": combined_text,
             "per_skill": per_skill,
+        }
+
+    @staticmethod
+    def _normalize_execution_strategy(execution_strategy: str) -> str:
+        normalized = str(execution_strategy or "auto").strip().lower()
+        if normalized == "direct_retrieve":
+            return "deterministic_only"
+        if normalized in {"auto", "deterministic_only", "deterministic_first", "llm_first"}:
+            return normalized
+        return "auto"
+
+    @staticmethod
+    def _build_execution_diagnostics(
+        *,
+        requested_strategy: str,
+        applied_strategy: str,
+    ) -> Dict[str, Any]:
+        return {
+            "requested_strategy": requested_strategy,
+            "applied_strategy": applied_strategy,
+            "structured_attempted": False,
+            "structured_status": "not_run",
+            "structured_error": "",
+            "script_attempted": False,
+            "script_status": "not_run",
+            "script_error": "",
+            "llm_attempted": False,
+            "llm_plan_status": "not_run",
+            "llm_code_status": "not_run",
+            "llm_exec_status": "not_run",
+            "record_count": 0,
+            "text_available": False,
+            "final_status": "empty",
         }
 
     def _generate_and_run_for_skill(
@@ -383,76 +466,170 @@ Return ONLY Python code."""
         query: str,
         max_results: int,
     ) -> tuple[str, str, List[Dict[str, Any]]]:
-        """Fallback: run retrieve.py CLI script if available, else skill.retrieve()."""
+        """Backward-compatible wrapper around deterministic execution."""
+        output, error, records, _diagnostics = self._run_deterministic_execution(
+            skill_name,
+            entities,
+            query,
+            max_results,
+            diagnostics=self._build_execution_diagnostics(
+                requested_strategy="fallback_retrieve",
+                applied_strategy="deterministic_only",
+            ),
+        )
+        return output, error, records
+
+    def _run_deterministic_execution(
+        self,
+        skill_name: str,
+        entities: Dict[str, List[str]],
+        query: str,
+        max_results: int,
+        *,
+        diagnostics: Dict[str, Any],
+    ) -> tuple[str, str, List[Dict[str, Any]], Dict[str, Any]]:
         skill = self.skill_registry.get_skill(skill_name)
         if skill is None:
-            return "", f"Skill '{skill_name}' not registered", []
+            diagnostics["structured_attempted"] = True
+            diagnostics["structured_status"] = "error"
+            diagnostics["structured_error"] = f"Skill '{skill_name}' not registered"
+            diagnostics["final_status"] = "deterministic_failed"
+            return "", diagnostics["structured_error"], [], diagnostics
 
-        retrieve_py_output = ""
+        structured_output, structured_error, records = self._run_structured_retrieve(
+            skill=skill,
+            entities=entities,
+            query=query,
+            max_results=max_results,
+            diagnostics=diagnostics,
+        )
 
-        # Try the fixed retrieve.py script first (for text output)
+        script_output = ""
+        if not records:
+            script_output, _script_error = self._run_retrieve_script(
+                skill=skill,
+                skill_name=skill_name,
+                entities=entities,
+                diagnostics=diagnostics,
+            )
+
+        diagnostics["record_count"] = len(records)
+        diagnostics["text_available"] = bool((script_output or structured_output).strip())
+
+        if records:
+            diagnostics["final_status"] = "success_structured"
+            return structured_output, "", records, diagnostics
+        if script_output:
+            diagnostics["final_status"] = "success_text_only"
+            return script_output, "", [], diagnostics
+        if diagnostics["structured_status"] == "error" or diagnostics["script_status"] == "error":
+            diagnostics["final_status"] = "deterministic_failed"
+            return "", structured_error or diagnostics["script_error"], [], diagnostics
+
+        diagnostics["final_status"] = "empty"
+        return "(no results)", "", [], diagnostics
+
+    def _run_structured_retrieve(
+        self,
+        *,
+        skill: Any,
+        entities: Dict[str, List[str]],
+        query: str,
+        max_results: int,
+        diagnostics: Dict[str, Any],
+    ) -> tuple[str, str, List[Dict[str, Any]]]:
+        diagnostics["structured_attempted"] = True
+        try:
+            results = skill.retrieve(
+                entities=entities,
+                query=query,
+                max_results=max_results,
+            )
+        except Exception as exc:
+            diagnostics["structured_status"] = "error"
+            diagnostics["structured_error"] = f"retrieve() error: {exc}"
+            return "", diagnostics["structured_error"], []
+
+        if not results:
+            diagnostics["structured_status"] = "empty"
+            return "", "", []
+
+        diagnostics["structured_status"] = "success"
+        records = [_sanitize_record(result) for result in results[:max_results]]
+        return self._format_structured_results(results[:max_results]), "", records
+
+    def _run_retrieve_script(
+        self,
+        *,
+        skill: Any,
+        skill_name: str,
+        entities: Dict[str, List[str]],
+        diagnostics: Dict[str, Any],
+    ) -> tuple[str, str]:
+        access_mode = getattr(skill, "access_mode", "")
+        should_run_retrieve_py = access_mode in {"CLI", "LOCAL_FILE", "DATASET"}
+        if not should_run_retrieve_py:
+            diagnostics["script_status"] = "skipped_by_policy"
+            return "", ""
+
+        diagnostics["script_attempted"] = True
+        entity_args = [
+            name
+            for enames in entities.values()
+            for name in enames
+        ]
+        if not entity_args:
+            diagnostics["script_status"] = "skipped_no_entities"
+            return "", ""
+
         try:
             skill_file = inspect.getfile(skill.__class__)
             skill_dir = os.path.dirname(skill_file)
             retrieve_py = os.path.join(skill_dir, "retrieve.py")
-            if os.path.isfile(retrieve_py):
-                entity_args = [
-                    name
-                    for enames in entities.values()
-                    for name in enames
-                ]
-                if entity_args:
-                    print(f"[Code Agent] Running fixed retrieve.py for {skill_name}: "
-                          f"{entity_args}")
-                    proc = subprocess.run(
-                        [sys.executable, retrieve_py] + entity_args,
-                        capture_output=True,
-                        text=True,
-                        timeout=60,
-                    )
-                    retrieve_py_output = proc.stdout.strip()
-                    if proc.returncode != 0 and not retrieve_py_output:
-                        print(f"[Code Agent] retrieve.py failed for {skill_name}: "
-                              f"{proc.stderr.strip()[:200]}")
-        except Exception as exc:
-            print(f"[Code Agent] retrieve.py execution error for {skill_name}: {exc}")
+            if not os.path.isfile(retrieve_py):
+                diagnostics["script_status"] = "not_available"
+                return "", ""
 
-        # Always call skill.retrieve() for structured records
-        try:
-            results = skill.retrieve(
-                entities=entities, query=query, max_results=max_results,
+            print(f"[Code Agent] Running fixed retrieve.py for {skill_name}: {entity_args}")
+            proc = subprocess.run(
+                [sys.executable, retrieve_py] + entity_args,
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
-            if not results:
-                # If retrieve.py gave us text, return that with empty records
-                if retrieve_py_output:
-                    return retrieve_py_output, "", []
-                return "(no results)", "", []
-
-            records = [_sanitize_record(result) for result in results[:max_results]]
-
-            # Use retrieve.py output as text if available; otherwise format
-            # structured results as human-readable text
-            if retrieve_py_output:
-                return retrieve_py_output, "", records
-
-            lines = []
-            for r in results[:max_results]:
-                line = (
-                    f"[{r.source}] {r.source_entity} ({r.source_type}) "
-                    f"--{r.relationship}--> "
-                    f"{r.target_entity} ({r.target_type})"
+            stdout = proc.stdout.strip()
+            stderr = proc.stderr.strip()
+            if proc.returncode != 0 and not stdout:
+                diagnostics["script_status"] = "error"
+                diagnostics["script_error"] = stderr[:200] or (
+                    f"retrieve.py exited with code {proc.returncode}"
                 )
-                if r.evidence_text:
-                    line += f"\n  Evidence: {r.evidence_text}"
-                if r.sources:
-                    line += f"\n  Sources: {', '.join(r.sources[:3])}"
-                lines.append(line)
-            return "\n".join(lines), "", records
+                print(f"[Code Agent] retrieve.py failed for {skill_name}: "
+                      f"{diagnostics['script_error']}")
+                return "", diagnostics["script_error"]
+            diagnostics["script_status"] = "success" if stdout else "empty"
+            return stdout, ""
         except Exception as exc:
-            # skill.retrieve() failed; still return retrieve.py output if we have it
-            if retrieve_py_output:
-                return retrieve_py_output, "", []
-            return "", f"retrieve() error: {exc}", []
+            diagnostics["script_status"] = "error"
+            diagnostics["script_error"] = f"retrieve.py error: {exc}"
+            print(f"[Code Agent] retrieve.py execution error for {skill_name}: {exc}")
+            return "", diagnostics["script_error"]
+
+    @staticmethod
+    def _format_structured_results(results: List[Any]) -> str:
+        lines = []
+        for result in results:
+            line = (
+                f"[{result.source}] {result.source_entity} ({result.source_type}) "
+                f"--{result.relationship}--> "
+                f"{result.target_entity} ({result.target_type})"
+            )
+            if result.evidence_text:
+                line += f"\n  Evidence: {result.evidence_text}"
+            if result.sources:
+                line += f"\n  Sources: {', '.join(result.sources[:3])}"
+            lines.append(line)
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Code execution

@@ -82,7 +82,8 @@ class RepoDBSkill(DatasetRAGSkill):
             logger.error("RepoDB: cannot load %s — %s", path, exc)
 
     def is_available(self) -> bool:
-        return self._implemented
+        self._ensure_loaded()
+        return bool(self._rows)
 
 
 
@@ -95,40 +96,61 @@ class RepoDBSkill(DatasetRAGSkill):
     ) -> List[RetrievalResult]:
         self._ensure_loaded()
         results: List[RetrievalResult] = []
-        seen_edges: Set[tuple] = set()
+        seen_rows: Set[tuple] = set()
+        normalized_query = str(query or "").strip().lower()
+        repurposing_query = any(
+            marker in normalized_query
+            for marker in (
+                "repurposing",
+                "repositioning",
+                "reposition",
+                "approved indication",
+                "approved indications",
+                "indication",
+                "indications",
+            )
+        )
 
         def _build_edges(idx_list, query_entity: str):
             for idx in idx_list:
                 row = self._rows[idx]
                 status = row.get("status", "Unknown")
-                if not self._include_failed and status != "Approved":
+                if not self._include_failed and status != "Approved" and not repurposing_query:
                     continue
 
                 drug_name = row.get("drug_name", "").strip()
+                disease_name = row.get("ind_name", "").strip()
+                if not drug_name or not disease_name:
+                    continue
 
-                # 每个字段建一条边
-                for field, target_type in self.EDGE_FIELDS.items():
-                    value = row.get(field, "").strip()
-                    if not value or value == "NA":
-                        continue
+                row_key = (
+                    drug_name.lower(),
+                    disease_name.lower(),
+                    row.get("NCT", "").strip().lower(),
+                    status.strip().lower(),
+                    row.get("phase", "").strip().lower(),
+                )
+                if row_key in seen_rows or len(results) >= max_results:
+                    continue
+                seen_rows.add(row_key)
 
-                    edge_key = (drug_name.lower(), field, value.lower())
-                    if edge_key in seen_edges or len(results) >= max_results:
-                        continue
-                    seen_edges.add(edge_key)
-
-                    results.append(RetrievalResult(
+                results.append(
+                    RetrievalResult(
                         source_entity=drug_name,
                         source_type="drug",
-                        target_entity=value,
-                        target_type=target_type,
-                        relationship=field,          # 列名作为关系
+                        target_entity=disease_name,
+                        target_type="disease",
+                        relationship="repurposing_evidence",
                         weight=1.0,
                         source="RepoDB",
                         skill_category="drug_repurposing",
-                        evidence_text=f"RepoDB: {drug_name} --[{field}]--> {value}",
-                        metadata={k: v.strip() for k, v in row.items()},  # 完整行
-                    ))
+                        evidence_text=(
+                            f"RepoDB: {drug_name} repurposing evidence for {disease_name} "
+                            f"(status={status}, phase={row.get('phase', '').strip() or 'Unknown'})"
+                        ),
+                        metadata={k: v.strip() for k, v in row.items()},
+                    )
+                )
 
         for drug in entities.get("drug", []):
             _build_edges(self._drug_index.get(drug.lower(), []), drug)

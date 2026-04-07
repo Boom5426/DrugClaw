@@ -8,7 +8,7 @@
   </head>
   <body>
     <main class="app">
-      <section class="panel">
+      <section class="panel panel-query">
         <h1>DrugClaw</h1>
         <p class="subtitle">Drug-specialized web query service</p>
         <form id="query-form">
@@ -20,6 +20,14 @@
         </form>
         <section id="result" class="result"></section>
       </section>
+      <aside id="resources-panel" class="panel panel-resources" aria-live="polite">
+        <div class="resource-header">
+          <h2>Resource Registry</h2>
+          <p class="resource-subtitle">Package health, know-how coverage, and gateway readiness</p>
+        </div>
+        <section id="resource-summary" class="resource-summary"></section>
+        <section id="resource-list" class="resource-list"></section>
+      </aside>
     </main>
     <script src="/static/chat.js"></script>
   </body>
