@@ -8,6 +8,8 @@
 
 ## Setup
 
+Optional local example fixture file: `resources_metadata/drug_toxicity/DILI/dili.csv`
+
 ## Usage
 
 ```python
@@ -43,3 +45,4 @@ if skill.is_available():
 
 - ChEMBL API: <https://www.ebi.ac.uk/chembl/api/data>
 - Related paper: <https://doi.org/10.1021/acs.chemrestox.0c00296>
+- Canonical packaged offline fixture (for `example.py`): `resources_metadata/drug_toxicity/DILI/dili.csv`

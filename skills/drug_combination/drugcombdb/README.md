@@ -8,8 +8,8 @@
 
 ## Setup
 
-1. Download the dataset from: <http://drugcombdb.idrblab.net/main/>
-2. Set `csv_path` (or `tsv_path` / `json_path`) in config (see below).
+1. Canonical packaged file: `resources_metadata/drug_combination/DrugCombDB/drugcombdb.csv`
+2. Set `csv_path` in config (or use resolver defaults).
 
 ## Configuration
 
@@ -24,7 +24,7 @@
 from drugclaw.skills.drug_combination.drugcombdb import DrugCombDBSkill
 
 skill = DrugCombDBSkill(config={
-    "csv_path": "...",  # path to DrugCombDB CSV file
+    "csv_path": "/data/boom/Agent/DrugClaw/resources_metadata/drug_combination/DrugCombDB/drugcombdb.csv",
     "delimiter": "...",  # column delimiter (default: auto-detect)
 })
 

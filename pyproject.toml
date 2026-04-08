@@ -25,4 +25,4 @@ where = ["."]
 drugclaw = ["static/*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "tools"]
+testpaths = ["tests"]

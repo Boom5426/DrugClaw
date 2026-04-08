@@ -10,37 +10,34 @@ description: >
 
 # GDKD Query Skill
 
-Search the Gene-Drug Knowledge Database (v20.0) by any entity.
+Search canonical GDKD rows by drug or gene entity.
 Auto-detects input type by pattern:
 
 | Input Pattern | Detected As | Match Logic |
 |---|---|---|
-| `BRAF`, `EGFR` | Gene symbol | exact on `Gene` (case-insensitive) |
-| `V600E`, `T315I` | Variant | exact on `Variant` |
-| `amplification` | Variant keyword | substring on `Description` |
-| anything else | Free text | substring on `Disease`, `Gene`, `Description`, all `Therapeutic context` columns |
+| `ABL1`, `EGFR` | Gene symbol | substring on `gene` |
+| `imatinib`, `erlotinib` | Drug name | substring on `drug` |
+| anything else | Free text | substring on `drug` OR `gene` |
 
 ## API
 
 | Function | Input | Returns |
 |---|---|---|
-| `load_gdkd(path)` | xlsx path | DataFrame |
-| `search(df, entity)` | single entity string | DataFrame |
-| `search_batch(df, entities)` | list of entity strings | dict[str, DataFrame] |
-| `summarize(hits, entity)` | DataFrame + label | compact text |
-| `to_json(hits)` | DataFrame | list[dict] |
+| `load_gdkd(path)` | CSV path | `list[dict]` |
+| `search(rows, entity)` | single entity string | `list[dict]` |
+| `search_batch(rows, entities)` | list of entity strings | `dict[str, list[dict]]` |
+| `summarize(hits, entity)` | rows + label | compact text |
+| `to_json(hits)` | rows | `list[dict]` |
 
 ## Usage
 
-See `if __name__ == "__main__"` block in `16_GDKD.py` for runnable
-examples covering: gene symbol, variant, disease name, drug name,
-batch search, and JSON output.
+See `if __name__ == "__main__"` block in `example.py` for runnable
+examples.
 
 ## Data
 
-- **Source**: GDKD Knowledge Database v20.0 (Synapse `syn2370773`)
+- **Source**: GDKD normalized full-package output
 - **Paper**: Dienstmann et al., *Cancer Discovery* 2015;5(2):118-123
-- **Format**: xlsx, one row per disease–gene–variant triplet
-- **Core columns**: `Disease`, `Gene`, `Variant`, `Description`, `Effect`
-- **Association slots**: up to 8 per row, each with `Association_N`, `Therapeutic context_N`, `Status_N`, `Evidence_N`, `PMID_N`
-- **Path**: `DATA_PATH` variable in `16_GDKD.py`
+- **Format**: CSV
+- **Columns**: `drug`, `gene`, `score`, `source`
+- **Path**: `resources_metadata/dti/GDKD/gdkd.csv` (default `DATA_PATH` in `example.py`)

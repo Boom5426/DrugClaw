@@ -12,8 +12,8 @@ Query drug/chemical and gene/protein entities in the **BioCreative VII DrugProt*
 
 ```
 DrugClaw/
-├── examples/
-│   └── 31_DrugProt.py              ← this script
+├── skills/drug_nlp/drugprot/
+│   └── example.py                  ← helper script
 └── resources_metadata/drug_nlp/DrugProt/
     └── drugprot-gs-training-development/
         ├── training/
@@ -29,7 +29,7 @@ DrugClaw/
             └── test_background_entities.tsv
 ```
 
-The script auto-resolves the data path via `../resources_metadata/drug_nlp/DrugProt/drugprot-gs-training-development` relative to itself. Override with `DRUGPROT_DIR` env var if needed.
+Use the repo-local `resources_metadata/drug_nlp/DrugProt/drugprot-gs-training-development` path, or override it with the `DRUGPROT_DIR` environment variable if your dataset lives elsewhere.
 
 All three splits are loaded by default. Note: `test-background` has no relations file (relations are the prediction target).
 
@@ -39,7 +39,7 @@ All three splits are loaded by default. Note: `test-background` has no relations
 from importlib.util import spec_from_file_location, module_from_spec
 
 # Load module
-spec = spec_from_file_location("drugprot", "/path/to/31_DrugProt.py")
+spec = spec_from_file_location("drugprot", "/path/to/skills/drug_nlp/drugprot/example.py")
 dp = module_from_spec(spec)
 spec.loader.exec_module(dp)
 

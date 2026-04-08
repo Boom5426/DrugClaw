@@ -1,0 +1,155 @@
+{
+  "contract_version": "1.0.0",
+  "archive_root": "resources_metadata",
+  "archive": {
+    "filename": "resources_metadata_full.tar.gz",
+    "root": "resources_metadata",
+    "compression": "gzip",
+    "overlay_target": "repository_root"
+  },
+  "canonical_root_rules": {
+    "single_runtime_root": "resources_metadata",
+    "forbidden_runtime_roots": [
+      "resources_metadata_full",
+      ".devlocal/imports/resources_metadata"
+    ],
+    "path_style": "relative_to_archive_root"
+  },
+  "resources": {
+    "direct": [
+      {
+        "resource_id": "drugbank",
+        "canonical_path": "drug_knowledgebase/DrugBank"
+      },
+      {
+        "resource_id": "drugcentral",
+        "canonical_path": "drug_knowledgebase/DrugCentral"
+      },
+      {
+        "resource_id": "unid3",
+        "canonical_path": "drug_knowledgebase/UniD3"
+      },
+      {
+        "resource_id": "fda_orange_book",
+        "canonical_path": "drug_knowledgebase/FDA_Orange_Book"
+      },
+      {
+        "resource_id": "sider",
+        "canonical_path": "adr/SIDER"
+      },
+      {
+        "resource_id": "drugmechdb",
+        "canonical_path": "drug_mechanism/DRUGMECHDB"
+      },
+      {
+        "resource_id": "ttd",
+        "canonical_path": "dti/TTD"
+      },
+      {
+        "resource_id": "molecular_target_data",
+        "canonical_path": "dti/Molecular Target Data"
+      },
+      {
+        "resource_id": "gdsc",
+        "canonical_path": "drug_molecular_property/GDSC"
+      },
+      {
+        "resource_id": "repodb",
+        "canonical_path": "drug_repurposing/RepoDB"
+      }
+    ],
+    "rename_only": [
+      {
+        "resource_id": "who_eml",
+        "source_path": "drug_knowledgebase/WHO Essential Medicines List",
+        "canonical_path": "drug_knowledgebase/WHO_EML"
+      },
+      {
+        "resource_id": "drug_repurposing_hub",
+        "source_path": "drug_repurposing/DrugRepurposingHub",
+        "canonical_path": "drug_repurposing/Repurposing_Hub"
+      },
+      {
+        "resource_id": "ade_corpus",
+        "source_path": "drug_nlp/ADECorpus",
+        "canonical_path": "drug_nlp/ADE_Corpus"
+      },
+      {
+        "resource_id": "ddi_corpus_2013",
+        "source_path": "drug_nlp/DDICorpus2013",
+        "canonical_path": "drug_nlp/DDI_Corpus_2013"
+      },
+      {
+        "resource_id": "tac_2017_adr",
+        "source_path": "drug_nlp/TAC2017ADR",
+        "canonical_path": "drug_nlp/TAC_2017_ADR"
+      },
+      {
+        "resource_id": "drug_reviews_drugs_com",
+        "source_path": "drug_review/DrugReviews",
+        "canonical_path": "drug_review/Drugs_com_Reviews"
+      },
+      {
+        "resource_id": "webmd_drug_reviews",
+        "source_path": "drug_review/WebMDDrugReviews",
+        "canonical_path": "drug_review/WebMDDrugReviews/webmd.csv"
+      }
+    ],
+    "normalized": [
+      {
+        "resource_id": "gdkd",
+        "source_path": "dti/GDKD",
+        "canonical_outputs": [
+          "dti/GDKD/gdkd.csv"
+        ]
+      },
+      {
+        "resource_id": "tarkg",
+        "source_path": "dti/TarKG",
+        "canonical_outputs": [
+          "dti/TarKG/tarkg.tsv"
+        ]
+      },
+      {
+        "resource_id": "repurposedrugs",
+        "source_path": "drug_repurposing/RepurposeDrugs",
+        "canonical_outputs": [
+          "drug_repurposing/RepurposeDrugs/repurposedrugs.csv"
+        ]
+      },
+      {
+        "resource_id": "drugcombdb",
+        "source_path": "drug_combination/DrugCombDB",
+        "canonical_outputs": [
+          "drug_combination/DrugCombDB/drugcombdb.csv"
+        ]
+      },
+      {
+        "resource_id": "drugcomb",
+        "source_path": "drug_combination/DrugComb",
+        "canonical_outputs": [
+          "drug_combination/DrugComb/drugcomb.csv"
+        ]
+      },
+      {
+        "resource_id": "livertox",
+        "source_path": "drug_toxicity/LiverTox",
+        "canonical_outputs": [
+          "drug_toxicity/LiverTox/livertox.json"
+        ]
+      },
+      {
+        "resource_id": "dili",
+        "source_path": "drug_toxicity/DILI",
+        "canonical_outputs": [
+          "drug_toxicity/DILI/dili.csv"
+        ]
+      }
+    ]
+  },
+  "guarantees": {
+    "no_second_runtime_root": true,
+    "overlay_only_under_archive_root": true,
+    "normalized_outputs_required": true
+  }
+}

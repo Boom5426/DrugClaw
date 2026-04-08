@@ -12,6 +12,7 @@
 from drugclaw.skills.drug_toxicity.livertox import LiverToxSkill
 
 skill = LiverToxSkill(config={
+    "fixture_path": "/data/boom/Agent/DrugClaw/resources_metadata/drug_toxicity/LiverTox/livertox.json",  # optional local fixture
 })
 
 if skill.is_available():
@@ -39,3 +40,4 @@ if skill.is_available():
 ## Data Source
 
 - Homepage: <https://www.ncbi.nlm.nih.gov/books/NBK547852/>
+- Canonical packaged fixture: `resources_metadata/drug_toxicity/LiverTox/livertox.json`

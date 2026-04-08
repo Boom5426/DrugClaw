@@ -8,8 +8,8 @@
 
 ## Setup
 
-1. Download the dataset from: <https://tarkg.ddtmlab.org/>
-2. Set `csv_path` (or `tsv_path` / `json_path`) in config (see below).
+1. Canonical packaged file: `resources_metadata/dti/TarKG/tarkg.tsv`
+2. Set `tsv_path` in config (or use resolver defaults).
 
 ## Usage
 
@@ -17,7 +17,7 @@
 from drugclaw.skills.dti.tarkg import TarKGSkill
 
 skill = TarKGSkill(config={
-    "csv_path": "/path/to/data.csv",
+    "tsv_path": "/data/boom/Agent/DrugClaw/resources_metadata/dti/TarKG/tarkg.tsv",
 })
 
 if skill.is_available():

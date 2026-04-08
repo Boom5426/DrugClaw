@@ -22,6 +22,7 @@ coverage.xml
 query_logs/
 self_bench_logs/
 .worktrees/
+.devlocal/
 resources_metadata/**
 !resources_metadata/packages/
 !resources_metadata/packages/**
@@ -101,8 +102,5 @@ resources_metadata/**
 !resources_metadata/dti/TarKG/tarkg.tsv
 
 # Developer-only source trees.
-# These rules only affect new untracked files; currently tracked files under
-# these paths remain versioned until explicitly removed from the git index.
-tests/
 self_bench/
 docs/

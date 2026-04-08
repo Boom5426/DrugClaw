@@ -8,8 +8,8 @@
 
 ## Setup
 
-1. Download the dataset from: <https://drugcomb.fimm.fi/>
-2. Set `csv_path` (or `tsv_path` / `json_path`) in config (see below).
+1. Canonical packaged file: `resources_metadata/drug_combination/DrugComb/drugcomb.csv`
+2. Set `csv_path` in config (or use resolver defaults).
 
 ## Configuration
 
@@ -24,7 +24,7 @@
 from drugclaw.skills.drug_combination.drugcomb import DrugCombSkill
 
 skill = DrugCombSkill(config={
-    "csv_path": "...",  # path to DrugComb summary CSV
+    "csv_path": "/data/boom/Agent/DrugClaw/resources_metadata/drug_combination/DrugComb/drugcomb.csv",
     "delimiter": "...",  # column delimiter (default: auto-detect)
 })
 

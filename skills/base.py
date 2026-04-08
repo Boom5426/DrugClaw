@@ -5,8 +5,9 @@ Every skill ingests a dict of entities + a free-text query and returns a list
 of RetrievalResult objects.  The schema maps directly to the fields that
 agent_retriever._build_subgraph() expects.
 
-Skills are now organized by *subcategory* (matching the 68DrugResources.xlsx
-Subcategory column) rather than by resource type (KG / Database / Dataset).
+Skills are now organized by *subcategory* (matching the historical resource
+inventory subcategory mapping) rather than by resource type (KG / Database /
+Dataset).
 
 Subcategories
 -------------

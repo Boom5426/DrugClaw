@@ -1,41 +1,18 @@
-# LiverTox Entity Lookup Skill
+# LiverTox Lookup Skill
 
 ## Description
 
-Retrieve liver toxicity information for drug entities from the LiverTox knowledge base (NCBI Bookshelf NBK547852).
+Lookup LiverTox drug entries using the canonical packaged fixture file.
 
-This skill searches the structured NXML documents and returns relevant sections mentioning the entities.
+## Data
 
-## Example Entities
+- Path: `resources_metadata/drug_toxicity/LiverTox/livertox.json`
+- Schema: list of objects with `drug`, `title`, `ncbi_book_id`
 
-acetaminophen  
-amoxicillin  
-isoniazid  
+## API
 
-Multiple entities can be queried together.
+- `load_documents(path=DATA_PATH)` -> `list[dict]`
+- `lookup_entities(entities)` -> `dict[str, list[dict]]`
 
-Example entity list:
-
-acetaminophen  
-amoxicillin  
-
-## Output
-
-Returns JSON containing relevant sections.
-
-Example:
-
-{
-  "acetaminophen": [
-    {
-      "section": "Hepatotoxicity",
-      "snippet": "Acetaminophen overdose is the most common cause..."
-    }
-  ]
-}
-
-## Notes
-
-- Entity matching is case-insensitive.
-- Up to 5 relevant sections are returned for each entity.
-- Data source: LiverTox (NCBI Bookshelf NBK547852).
+`lookup_entities` returns up to 5 matches per entity with `section` and `snippet`
+fields used by `retrieve.py`.

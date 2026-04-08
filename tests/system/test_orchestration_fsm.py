@@ -1,0 +1,1908 @@
+from __future__ import annotations
+
+import drugclaw.main_system as main_system_module
+from drugclaw.agent_retriever import RetrieverAgent
+from drugclaw.knowhow_models import KnowHowDocument
+from drugclaw.knowhow_registry import KnowHowRegistry
+from drugclaw.models import AgentState, ThinkingMode
+from drugclaw.query_plan import QueryPlan
+
+
+class _PlannerBypassLLMStub:
+    def generate_json(self, messages, temperature=0.3):
+        raise AssertionError("Retriever should consume state.query_plan instead of re-planning")
+
+
+class _CoderStub:
+    def __init__(self):
+        self.last_entities = None
+        self.last_skill_names = None
+        self.last_execution_strategy = None
+
+    def generate_and_execute(
+        self,
+        skill_names,
+        entities,
+        query,
+        max_results_per_skill=30,
+        execution_strategy="auto",
+    ):
+        self.last_entities = entities
+        self.last_skill_names = skill_names
+        self.last_execution_strategy = execution_strategy
+        per_skill = {}
+        for skill_name in skill_names:
+            per_skill[skill_name] = {
+                "output": f"Results from {skill_name}",
+                "records": [],
+                "code": "",
+                "strategy": execution_strategy,
+                "diagnostics": {
+                    "requested_strategy": execution_strategy,
+                    "applied_strategy": execution_strategy,
+                    "structured_status": "error",
+                    "structured_error": "retrieve() error: stub failure",
+                    "final_status": "deterministic_failed",
+                    "record_count": 0,
+                    "text_available": False,
+                },
+            }
+        return {
+            "text": "\n".join(f"Results from {name}" for name in skill_names),
+            "per_skill": per_skill,
+        }
+
+
+class _RegistryStub:
+    def get_skills_for_query(self, query):
+        return ["ChEMBL"]
+
+    def get_skill(self, skill_name):
+        return None
+
+    @property
+    def skill_tree_prompt(self):
+        return "stub tree"
+
+
+class _SelectiveRegistryStub(_RegistryStub):
+    def __init__(self, valid_skills):
+        self.valid_skills = list(valid_skills)
+        self._valid_skill_set = set(valid_skills)
+
+    def get_skills_for_query(self, query):
+        return list(self.valid_skills)
+
+    def get_skill(self, skill_name):
+        if skill_name in self._valid_skill_set:
+            return object()
+        return None
+
+
+class _AvailabilitySkillStub:
+    def __init__(self, available: bool):
+        self._available = available
+
+    def is_available(self):
+        return self._available
+
+
+class _AvailabilityRegistryStub(_RegistryStub):
+    def __init__(self, availability):
+        self.availability = dict(availability)
+
+    def get_skills_for_query(self, query):
+        return list(self.availability)
+
+    def get_skill(self, skill_name):
+        if skill_name not in self.availability:
+            return None
+        return _AvailabilitySkillStub(self.availability[skill_name])
+
+
+class _ResourceRegistryStub:
+    def __init__(self, entries):
+        self.entries = {entry.name: entry for entry in entries}
+
+    def get_resource(self, name):
+        return self.entries.get(name)
+
+
+def _make_knowhow_registry() -> KnowHowRegistry:
+    return KnowHowRegistry.from_documents(
+        [
+            KnowHowDocument(
+                doc_id="direct_targets_grounding",
+                title="Direct target grounding",
+                task_types=["direct_targets"],
+                evidence_types=["database_record"],
+                declared_by_skills=["BindingDB", "DrugBank", "Open Targets Platform"],
+                risk_level="medium",
+                conflict_policy="Prefer direct binding evidence before association-only evidence.",
+                answer_template="direct_targets",
+                max_prompt_snippets=1,
+                body_path="",
+                body_text="Prioritize established direct binding evidence and keep association-only targets separate.",
+            ),
+            KnowHowDocument(
+                doc_id="mechanism_explanation",
+                title="Mechanism explanation",
+                task_types=["mechanism_of_action"],
+                evidence_types=["database_record"],
+                declared_by_skills=["Open Targets Platform"],
+                risk_level="medium",
+                conflict_policy="Mark mechanism claims as limited when direct support is thin.",
+                answer_template="mechanism_of_action",
+                max_prompt_snippets=1,
+                body_path="",
+                body_text="Explain mechanism after the direct target section and call out evidence limits.",
+            ),
+        ]
+    )
+
+
+def test_retriever_consumes_query_plan_when_present() -> None:
+    state = AgentState(
+        original_query="What does imatinib target?",
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["BindingDB"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Use direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB", "ChEMBL"]),
+        coder_agent=_CoderStub(),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "BindingDB" in updated.retrieved_text
+    assert updated.current_query_entities == {"drug": ["imatinib"]}
+
+
+def test_retriever_prefers_resource_filter_over_query_plan_hints() -> None:
+    state = AgentState(
+        original_query="What does imatinib target?",
+        resource_filter=["DrugBank"],
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["BindingDB"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Use direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["DrugBank", "BindingDB"]),
+        coder_agent=_CoderStub(),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "DrugBank" in updated.retrieved_text
+    assert "BindingDB" not in updated.retrieved_text
+
+
+def test_retriever_falls_back_to_registry_skills_when_plan_hints_are_invalid() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What does imatinib target?",
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=[
+                "drug_target_retrieval",
+                "pharmacological_profiling",
+                "biochemical_pathway_analysis",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Use direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB", "ChEMBL"]),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert "BindingDB" in updated.retrieved_text or "ChEMBL" in updated.retrieved_text
+    assert "drug_target_retrieval" not in updated.retrieved_text
+    assert coder.last_skill_names == ["BindingDB", "ChEMBL"]
+
+
+def test_retriever_normalizes_singular_entity_keys_from_query_plan() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What does imatinib target?",
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"], "gene": ["ABL1"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["BindingDB"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Use direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_entities == {"drug": ["imatinib"], "gene": ["ABL1"]}
+
+
+def test_retriever_filters_unavailable_skills_from_query_plan() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What does imatinib target?",
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["TTD", "BindingDB"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _AvailabilityRegistryStub({"TTD": False, "BindingDB": True}),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert "BindingDB" in updated.retrieved_text
+    assert "TTD" not in updated.retrieved_text
+    assert coder.last_skill_names == ["BindingDB"]
+
+
+def test_retriever_does_not_bypass_disabled_registry_entries_from_resource_filter() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What does imatinib target?",
+        resource_filter=["DeprecatedSkill", "BindingDB"],
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["DeprecatedSkill", "BindingDB"]),
+        coder_agent=coder,
+        resource_registry=_ResourceRegistryStub(
+            [
+                type("Entry", (), {"name": "DeprecatedSkill", "status": "disabled", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "BindingDB", "status": "ready", "access_mode": "REST_API"})(),
+            ]
+        ),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "BindingDB" in updated.retrieved_text
+    assert "DeprecatedSkill" not in updated.retrieved_text
+    assert coder.last_skill_names == ["BindingDB"]
+
+
+def test_retriever_skips_gateway_only_registry_entries_without_runtime_skill() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What does imatinib target?",
+        resource_filter=["GatewayOnly", "BindingDB"],
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB"]),
+        coder_agent=coder,
+        resource_registry=_ResourceRegistryStub(
+            [
+                type(
+                    "Entry",
+                    (),
+                    {
+                        "name": "GatewayOnly",
+                        "status": "ready",
+                        "access_mode": "GATEWAY",
+                        "gateway_declared": True,
+                        "gateway_ready": True,
+                    },
+                )(),
+                type(
+                    "Entry",
+                    (),
+                    {
+                        "name": "BindingDB",
+                        "status": "ready",
+                        "access_mode": "REST_API",
+                    },
+                )(),
+            ]
+        ),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "BindingDB" in updated.retrieved_text
+    assert "GatewayOnly" not in updated.retrieved_text
+    assert coder.last_skill_names == ["BindingDB"]
+
+
+def test_retriever_preserves_task_aware_knowhow_hints_for_composite_query_plan() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets and mechanism of action of imatinib?",
+        query_plan=QueryPlan(
+            question_type="mechanism",
+            entities={"drug": ["imatinib"]},
+            subquestions=[
+                "What are the established direct targets of imatinib?",
+                "What is the mechanism of action of imatinib?",
+            ],
+            preferred_skills=[
+                "BindingDB",
+                "Open Targets Platform",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Composite target plus mechanism plan."],
+            plan_type="composite_query",
+            primary_task={
+                "task_type": "direct_targets",
+                "task_id": "primary",
+                "question": "What are the established direct targets of imatinib?",
+                "entities": {"drug": ["imatinib"]},
+                "preferred_skills": ["BindingDB"],
+                "preferred_evidence_types": ["database_record"],
+                "answer_risk_level": "medium",
+            },
+            supporting_tasks=[
+                {
+                    "task_type": "mechanism_of_action",
+                    "task_id": "support_1",
+                    "question": "What is the mechanism of action of imatinib?",
+                    "entities": {"drug": ["imatinib"]},
+                    "preferred_skills": ["Open Targets Platform"],
+                    "preferred_evidence_types": ["database_record"],
+                    "answer_risk_level": "medium",
+                }
+            ],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB", "Open Targets Platform"]),
+        coder_agent=coder,
+        knowhow_registry=_make_knowhow_registry(),
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.query_plan is not None
+    assert updated.query_plan.primary_task is not None
+    assert updated.query_plan.primary_task.knowhow_doc_ids == [
+        "direct_targets_grounding"
+    ]
+    assert updated.query_plan.supporting_tasks[0].knowhow_doc_ids == [
+        "mechanism_explanation"
+    ]
+    assert any(
+        diagnostic.get("kind") == "knowhow"
+        and diagnostic.get("task_id") == "support_1"
+        and diagnostic.get("doc_id") == "mechanism_explanation"
+        and "Open Targets Platform" in diagnostic.get("declared_by_skills", [])
+        for diagnostic in updated.retrieval_diagnostics
+    )
+    assert coder.last_skill_names == ["BindingDB", "Open Targets Platform"]
+
+
+def test_retriever_prefers_deterministic_only_for_simple_target_lookup() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets of imatinib?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["BindingDB"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_prefers_deterministic_only_for_simple_drug_target_interaction() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets of imatinib?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="Drug-Target Interaction",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["ChEMBL"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["ChEMBL"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_prefers_deterministic_only_for_simple_drug_target_identification() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets of imatinib?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_target_identification",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["ChEMBL"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["ChEMBL"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_prefers_deterministic_only_for_simple_relationship_retrieval_targets() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets of imatinib?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="Relationship Retrieval",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["ChEMBL"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["ChEMBL"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_resource_filter_infers_entities_for_label_query() -> None:
+    class _EntityExtractionFailLLM:
+        def generate_json(self, messages, temperature=0.3):
+            raise ValueError("entity extraction unavailable")
+
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What prescribing and safety information is available for metformin?",
+        thinking_mode="simple",
+        resource_filter=["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"],
+    )
+
+    retriever = RetrieverAgent(
+        _EntityExtractionFailLLM(),
+        _SelectiveRegistryStub(["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"]),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.current_query_entities == {"drug": ["metformin"]}
+    assert coder.last_entities == {"drug": ["metformin"]}
+
+
+def test_retriever_resource_filter_uses_deterministic_only_for_simple_label_query() -> None:
+    class _EntityExtractionFailLLM:
+        def generate_json(self, messages, temperature=0.3):
+            raise ValueError("entity extraction unavailable")
+
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What prescribing and safety information is available for metformin?",
+        thinking_mode="simple",
+        resource_filter=["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"],
+    )
+
+    retriever = RetrieverAgent(
+        _EntityExtractionFailLLM(),
+        _SelectiveRegistryStub(["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_resource_filter_reuses_fallback_query_plan_entities_when_llm_returns_empty() -> None:
+    class _EmptyEntityLLM:
+        def generate_json(self, messages, temperature=0.3):
+            return {"drugs": [], "genes": [], "diseases": [], "pathways": []}
+
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What prescribing and safety information is available for metformin?",
+        thinking_mode="simple",
+        resource_filter=["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"],
+    )
+
+    retriever = RetrieverAgent(
+        _EmptyEntityLLM(),
+        _SelectiveRegistryStub(["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"]),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.query_plan is not None
+    assert updated.query_plan.entities == {"drug": ["metformin"]}
+    assert updated.current_query_entities == {"drug": ["metformin"]}
+    assert coder.last_entities == {"drug": ["metformin"]}
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_resource_filter_prefers_resolved_alias_entities() -> None:
+    class _EntityExtractionFailLLM:
+        def generate_json(self, messages, temperature=0.3):
+            raise ValueError("entity extraction unavailable")
+
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What does Gleevec target?",
+        normalized_query="What does imatinib target?",
+        resolved_entities={"drug": ["imatinib"]},
+        input_resolution={
+            "status": "resolved",
+            "canonical_drug_names": ["imatinib"],
+        },
+        thinking_mode="simple",
+        resource_filter=["BindingDB"],
+    )
+
+    retriever = RetrieverAgent(
+        _EntityExtractionFailLLM(),
+        _SelectiveRegistryStub(["BindingDB"]),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.query_plan is not None
+    assert updated.query_plan.entities == {"drug": ["imatinib"]}
+    assert updated.current_query_entities == {"drug": ["imatinib"]}
+    assert coder.last_entities == {"drug": ["imatinib"]}
+
+
+def test_retriever_resource_filter_prefers_resolved_glucophage_alias_entities_for_labeling_query() -> None:
+    class _EntityExtractionFailLLM:
+        def generate_json(self, messages, temperature=0.3):
+            raise ValueError("entity extraction unavailable")
+
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What prescribing and safety information is available for Glucophage?",
+        normalized_query="What prescribing and safety information is available for metformin?",
+        resolved_entities={"drug": ["metformin"]},
+        input_resolution={
+            "status": "resolved",
+            "canonical_drug_names": ["metformin"],
+        },
+        thinking_mode="simple",
+        resource_filter=["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"],
+    )
+
+    retriever = RetrieverAgent(
+        _EntityExtractionFailLLM(),
+        _SelectiveRegistryStub(["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"]),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.query_plan is not None
+    assert updated.query_plan.question_type == "labeling"
+    assert updated.query_plan.entities == {"drug": ["metformin"]}
+    assert updated.current_query_entities == {"drug": ["metformin"]}
+    assert coder.last_entities == {"drug": ["metformin"]}
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_resource_filter_preserves_composite_query_plan_shape() -> None:
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB"]),
+        coder_agent=_CoderStub(),
+    )
+
+    plan = retriever._build_resource_filter_query_plan(
+        "What are the known drug targets and mechanism of action of imatinib?",
+        key_entities={"drug": ["imatinib"]},
+        resource_filter=["BindingDB"],
+    )
+
+    assert plan.plan_type == "composite_query"
+    assert plan.primary_task is not None
+    assert plan.primary_task.task_type == "direct_targets"
+    assert plan.primary_task.preferred_skills == ["BindingDB"]
+    assert [task.task_type for task in plan.supporting_tasks] == [
+        "mechanism_of_action"
+    ]
+    assert plan.supporting_tasks[0].preferred_skills == ["BindingDB"]
+    assert plan.preferred_skills == ["BindingDB"]
+    assert plan.subquestions == [
+        "What are the established direct targets of imatinib?",
+        "What is the mechanism of action of imatinib?",
+    ]
+
+
+def test_retriever_enriches_empty_planner_query_plan_when_resource_filter_is_present() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What prescribing and safety information is available for metformin?",
+        thinking_mode="simple",
+        resource_filter=["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"],
+        query_plan=QueryPlan(
+            question_type="unknown",
+            entities={},
+            subquestions=["What prescribing and safety information is available for metformin?"],
+            preferred_skills=[],
+            preferred_evidence_types=[],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Fallback plan used because planner output was unavailable or invalid."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["DailyMed", "openFDA Human Drug", "MedlinePlus Drug Info"]),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.query_plan is not None
+    assert updated.query_plan.question_type == "labeling"
+    assert updated.query_plan.entities == {"drug": ["metformin"]}
+    assert updated.current_query_entities == {"drug": ["metformin"]}
+    assert coder.last_entities == {"drug": ["metformin"]}
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_resource_filter_infers_entities_for_pgx_query_when_llm_returns_empty() -> None:
+    class _EmptyEntityLLMStub:
+        def generate_json(self, messages, temperature=0.3):
+            return {}
+
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What pharmacogenomic factors affect clopidogrel efficacy and safety?",
+        thinking_mode="simple",
+        resource_filter=["PharmGKB", "CPIC"],
+    )
+
+    retriever = RetrieverAgent(
+        _EmptyEntityLLMStub(),
+        _SelectiveRegistryStub(["PharmGKB", "CPIC"]),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.query_plan is not None
+    assert updated.query_plan.question_type == "pharmacogenomics"
+    assert updated.query_plan.entities == {"drug": ["clopidogrel"]}
+    assert updated.current_query_entities == {"drug": ["clopidogrel"]}
+    assert coder.last_entities == {"drug": ["clopidogrel"]}
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_prioritizes_ready_remote_skills_for_fallback() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets of imatinib?",
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["TTD", "TarKG"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct target databases."],
+        ),
+    )
+
+    class _SkillWithAccess(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RegistryWithAccess(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "TTD": _SkillWithAccess(True, "LOCAL_FILE"),
+                "TarKG": _SkillWithAccess(True, "LOCAL_FILE"),
+                "ChEMBL": _SkillWithAccess(True, "CLI"),
+                "Open Targets Platform": _SkillWithAccess(True, "REST_API"),
+                "DGIdb": _SkillWithAccess(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return ["TTD", "ChEMBL", "TarKG", "Open Targets Platform", "DGIdb"]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RegistryWithAccess(),
+        coder_agent=coder,
+        resource_registry=_ResourceRegistryStub(
+            [
+                type("Entry", (), {"name": "TTD", "status": "ready", "access_mode": "LOCAL_FILE"})(),
+                type("Entry", (), {"name": "TarKG", "status": "ready", "access_mode": "LOCAL_FILE"})(),
+                type("Entry", (), {"name": "ChEMBL", "status": "ready", "access_mode": "CLI"})(),
+                type("Entry", (), {"name": "Open Targets Platform", "status": "ready", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "DGIdb", "status": "ready", "access_mode": "REST_API"})(),
+            ]
+        ),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "ChEMBL" in updated.retrieved_text
+    assert "DGIdb" in updated.retrieved_text
+    assert "Open Targets Platform" in updated.retrieved_text
+    assert "TTD" not in updated.retrieved_text
+    assert "TarKG" not in updated.retrieved_text
+    assert coder.last_skill_names == ["ChEMBL", "DGIdb", "Open Targets Platform"]
+
+
+def test_retriever_narrows_target_lookup_to_primary_dti_sources() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets of imatinib?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["ChEMBL", "Molecular Targets", "DRUGMECHDB"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct target databases."],
+        ),
+    )
+
+    class _TargetSkillStub(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _TargetLookupRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "ChEMBL": _TargetSkillStub(True, "CLI"),
+                "BindingDB": _TargetSkillStub(True, "REST_API"),
+                "DGIdb": _TargetSkillStub(True, "REST_API"),
+                "Open Targets Platform": _TargetSkillStub(True, "REST_API"),
+                "Molecular Targets": _TargetSkillStub(True, "REST_API"),
+                "DRUGMECHDB": _TargetSkillStub(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return [
+                "ChEMBL",
+                "Molecular Targets",
+                "DRUGMECHDB",
+                "BindingDB",
+                "DGIdb",
+                "Open Targets Platform",
+            ]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _TargetLookupRegistry(),
+        coder_agent=coder,
+        resource_registry=_ResourceRegistryStub(
+            [
+                type("Entry", (), {"name": "ChEMBL", "status": "ready", "access_mode": "CLI"})(),
+                type("Entry", (), {"name": "BindingDB", "status": "ready", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "DGIdb", "status": "ready", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "Open Targets Platform", "status": "ready", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "Molecular Targets", "status": "ready", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "DRUGMECHDB", "status": "ready", "access_mode": "REST_API"})(),
+            ]
+        ),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "BindingDB" in updated.retrieved_text
+    assert "ChEMBL" in updated.retrieved_text
+    assert "DGIdb" in updated.retrieved_text
+    assert "Open Targets Platform" in updated.retrieved_text
+    assert "Molecular Targets" not in updated.retrieved_text
+    assert "DRUGMECHDB" not in updated.retrieved_text
+    assert coder.last_skill_names == [
+        "BindingDB",
+        "ChEMBL",
+        "DGIdb",
+        "Open Targets Platform",
+    ]
+
+
+def test_retriever_prefers_explicit_plan_skills_without_padding_unrelated_suggestions() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the approved indications and repurposing evidence of metformin?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_repurposing",
+            entities={"drug": ["metformin"]},
+            subquestions=["What are the approved indications and repurposing evidence of metformin?"],
+            preferred_skills=["RepoDB", "DrugCentral", "DrugBank"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer repurposing and indication sources."],
+        ),
+    )
+
+    class _RepurposingSkillStub(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RepurposingRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "RepoDB": _RepurposingSkillStub(False, "DATASET"),
+                "DrugCentral": _RepurposingSkillStub(True, "REST_API"),
+                "DrugBank": _RepurposingSkillStub(True, "REST_API"),
+                "DailyMed": _RepurposingSkillStub(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return ["DailyMed", "DrugCentral", "DrugBank"]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RepurposingRegistry(),
+        coder_agent=coder,
+        resource_registry=_ResourceRegistryStub(
+            [
+                type("Entry", (), {"name": "RepoDB", "status": "missing_metadata", "access_mode": "DATASET"})(),
+                type("Entry", (), {"name": "DrugCentral", "status": "ready", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "DrugBank", "status": "ready", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "DailyMed", "status": "ready", "access_mode": "REST_API"})(),
+            ]
+        ),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "DrugCentral" in updated.retrieved_text
+    assert "DrugBank" in updated.retrieved_text
+    assert "DailyMed" not in updated.retrieved_text
+    assert coder.last_skill_names == ["DrugCentral", "DrugBank"]
+
+
+def test_retriever_prefers_deterministic_only_for_simple_drug_repurposing_query() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the approved indications and repurposing evidence of metformin?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_repurposing",
+            entities={"drug": ["metformin"]},
+            subquestions=["What are the approved indications and repurposing evidence of metformin?"],
+            preferred_skills=["RepoDB", "DrugCentral", "DrugBank", "DailyMed", "openFDA Human Drug"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct indication and repurposing evidence sources."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["RepoDB", "DrugCentral", "DrugBank", "DailyMed", "openFDA Human Drug"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == ["RepoDB", "DrugCentral", "DrugBank"]
+
+
+def test_retriever_prefers_local_repurposing_fallback_before_official_label_sources() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the approved indications and repurposing evidence of metformin?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_repurposing",
+            entities={"drug": ["metformin"]},
+            subquestions=["What are the approved indications and repurposing evidence of metformin?"],
+            preferred_skills=[
+                "RepoDB",
+                "DrugCentral",
+                "DrugBank",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct indication and repurposing evidence sources."],
+        ),
+    )
+
+    class _RepurposingSkillStub(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RepurposingRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "RepoDB": _RepurposingSkillStub(False, "DATASET"),
+                "DrugCentral": _RepurposingSkillStub(False, "REST_API"),
+                "DrugBank": _RepurposingSkillStub(False, "REST_API"),
+                "DrugRepoBank": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "RepurposeDrugs": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "OREGANO": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "openFDA Human Drug": _RepurposingSkillStub(True, "REST_API"),
+                "DailyMed": _RepurposingSkillStub(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return ["DrugRepoBank", "RepurposeDrugs", "OREGANO", "DailyMed", "openFDA Human Drug"]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RepurposingRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == [
+        "DrugRepoBank",
+        "RepurposeDrugs",
+        "OREGANO",
+        "openFDA Human Drug",
+    ]
+
+
+def test_retriever_normalizes_structured_drug_entity_dicts_to_names_for_coder() -> None:
+    normalized = RetrieverAgent._normalize_entities_for_coder(
+        {
+            "drug": [
+                {"name": "warfarin", "type": "small_molecule_drug"},
+                "Coumadin",
+            ]
+        }
+    )
+
+    assert normalized == {"drug": ["warfarin", "Coumadin"]}
+
+
+def test_retriever_supplements_composite_adr_queries_with_official_labeling_skill() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the major safety risks and serious adverse reactions of clozapine?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="adr",
+            entities={"drug": ["clozapine"]},
+            subquestions=["What are the major safety risks and serious adverse reactions of clozapine?"],
+            preferred_skills=[
+                "ADReCS",
+                "FAERS",
+                "nSIDES",
+                "SIDER",
+                "DailyMed",
+                "openFDA Human Drug",
+                "MedlinePlus Drug Info",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="high",
+            notes=["Pair serious ADR evidence with official labeling support."],
+            plan_type="composite_query",
+            primary_task={"task_type": "major_adrs"},
+            supporting_tasks=[{"task_type": "labeling_summary"}],
+        ),
+    )
+
+    class _AdrRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "ADReCS": _AvailabilitySkillStub(True),
+                "FAERS": _AvailabilitySkillStub(True),
+                "nSIDES": _AvailabilitySkillStub(True),
+                "SIDER": _AvailabilitySkillStub(True),
+                "openFDA Human Drug": _AvailabilitySkillStub(True),
+                "DailyMed": _AvailabilitySkillStub(True),
+                "MedlinePlus Drug Info": _AvailabilitySkillStub(True),
+            }
+
+        def get_skills_for_query(self, query):
+            return [
+                "ADReCS",
+                "FAERS",
+                "nSIDES",
+                "SIDER",
+                "DailyMed",
+                "openFDA Human Drug",
+            ]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _AdrRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert "openFDA Human Drug" in coder.last_skill_names
+
+
+def test_retriever_infers_query_entities_when_planner_entities_are_missing() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the clinically important drug-drug interactions of warfarin and their mechanisms?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="ddi_mechanism",
+            entities={},
+            subquestions=["What are the clinically important drug-drug interactions of warfarin and their mechanisms?"],
+            preferred_skills=["DDInter", "KEGG Drug"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="high",
+            notes=["Planner failed to return entities."],
+            plan_type="composite_query",
+            primary_task={"task_type": "ddi_mechanism"},
+            supporting_tasks=[{"task_type": "clinically_relevant_ddi"}],
+        ),
+    )
+
+    class _DdiRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "DDInter": _AvailabilitySkillStub(True),
+                "KEGG Drug": _AvailabilitySkillStub(True),
+            }
+
+        def get_skills_for_query(self, query):
+            return ["DDInter", "KEGG Drug"]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _DdiRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_entities == {"drug": ["warfarin"]}
+    assert coder.last_execution_strategy == "deterministic_only"
+
+
+def test_retriever_supplements_primary_repurposing_with_official_indication_support_when_needed() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the approved indications and repurposing evidence of metformin?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_repurposing",
+            entities={"drug": ["metformin"]},
+            subquestions=["What are the approved indications and repurposing evidence of metformin?"],
+            preferred_skills=[
+                "RepoDB",
+                "DrugCentral",
+                "DrugBank",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Keep both repurposing and approved-indication coverage when availability is mixed."],
+        ),
+    )
+
+    class _RepurposingSkillStub(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RepurposingRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "RepoDB": _RepurposingSkillStub(True, "DATASET"),
+                "DrugCentral": _RepurposingSkillStub(False, "REST_API"),
+                "DrugBank": _RepurposingSkillStub(False, "REST_API"),
+                "DrugRepoBank": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "RepurposeDrugs": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "OREGANO": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "openFDA Human Drug": _RepurposingSkillStub(True, "REST_API"),
+                "DailyMed": _RepurposingSkillStub(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return [
+                "RepoDB",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RepurposingRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == ["RepoDB", "openFDA Human Drug"]
+
+
+def test_retriever_supplements_primary_indication_sources_with_local_repurposing_fallback_when_needed() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the approved indications and repurposing evidence of metformin?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_repurposing",
+            entities={"drug": ["metformin"]},
+            subquestions=["What are the approved indications and repurposing evidence of metformin?"],
+            preferred_skills=[
+                "RepoDB",
+                "DrugCentral",
+                "DrugBank",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Keep both repurposing and approved-indication coverage when availability is mixed."],
+        ),
+    )
+
+    class _RepurposingSkillStub(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RepurposingRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "RepoDB": _RepurposingSkillStub(False, "DATASET"),
+                "DrugCentral": _RepurposingSkillStub(True, "REST_API"),
+                "DrugBank": _RepurposingSkillStub(False, "REST_API"),
+                "DrugRepoBank": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "RepurposeDrugs": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "OREGANO": _RepurposingSkillStub(True, "LOCAL_FILE"),
+                "openFDA Human Drug": _RepurposingSkillStub(True, "REST_API"),
+                "DailyMed": _RepurposingSkillStub(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return [
+                "DrugCentral",
+                "DrugRepoBank",
+                "RepurposeDrugs",
+                "OREGANO",
+                "DailyMed",
+                "openFDA Human Drug",
+            ]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RepurposingRegistry(),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == [
+        "DrugCentral",
+        "DrugRepoBank",
+        "RepurposeDrugs",
+        "OREGANO",
+    ]
+
+
+def test_retriever_prefers_deterministic_only_for_simple_mechanism_query() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets and mechanism of action of imatinib?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="mechanism",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known drug targets and mechanism of action of imatinib?"],
+            preferred_skills=["Open Targets Platform", "DRUGMECHDB", "BindingDB"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct MoA and target evidence sources."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["Open Targets Platform", "DRUGMECHDB", "BindingDB"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == ["Open Targets Platform", "DRUGMECHDB", "BindingDB"]
+
+
+def test_retriever_enforces_phase_2a_mechanism_bundle_over_unrelated_plan_hints() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets and mechanism of action of imatinib?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="mechanism",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known drug targets and mechanism of action of imatinib?"],
+            preferred_skills=["DailyMed", "Open Targets Platform", "DRUGMECHDB", "BindingDB"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct MoA and target evidence sources."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["DailyMed", "Open Targets Platform", "DRUGMECHDB", "BindingDB"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == ["Open Targets Platform", "DRUGMECHDB", "BindingDB"]
+
+
+def test_retriever_enforces_phase_2a_pgx_bundle_over_unrelated_plan_hints() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What pharmacogenomic factors affect clopidogrel efficacy and safety?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="pharmacogenomics",
+            entities={"drug": ["clopidogrel"]},
+            subquestions=["What pharmacogenomic factors affect clopidogrel efficacy and safety?"],
+            preferred_skills=["FAERS", "PharmGKB", "CPIC"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="high",
+            notes=["Prefer PGx guidance sources."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["FAERS", "PharmGKB", "CPIC"]),
+        coder_agent=coder,
+    )
+
+    retriever.execute(state)
+
+    assert coder.last_execution_strategy == "deterministic_only"
+    assert coder.last_skill_names == ["PharmGKB", "CPIC"]
+
+
+def test_retriever_propagates_nested_coder_diagnostics() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the known drug targets of imatinib?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="target_lookup",
+            entities={"drug": ["imatinib"]},
+            subquestions=["What are the known targets of imatinib?"],
+            preferred_skills=["BindingDB"],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer direct target databases."],
+        ),
+    )
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _SelectiveRegistryStub(["BindingDB"]),
+        coder_agent=coder,
+    )
+
+    updated = retriever.execute(state)
+
+    assert updated.retrieval_diagnostics[0]["structured_status"] == "error"
+    assert updated.retrieval_diagnostics[0]["final_status"] == "deterministic_failed"
+
+
+def test_retriever_uses_available_repurposing_fallback_skills_when_primary_ones_are_unavailable() -> None:
+    coder = _CoderStub()
+    state = AgentState(
+        original_query="What are the approved indications and repurposing evidence of metformin?",
+        thinking_mode="simple",
+        query_plan=QueryPlan(
+            question_type="drug_repurposing",
+            entities={"drug": ["metformin"]},
+            subquestions=["What are the approved indications and repurposing evidence of metformin?"],
+            preferred_skills=[
+                "RepoDB",
+                "DrugCentral",
+                "DrugBank",
+                "DailyMed",
+                "openFDA Human Drug",
+            ],
+            preferred_evidence_types=["database_record"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="medium",
+            notes=["Prefer repurposing sources, then live indication backups."],
+        ),
+    )
+
+    class _RepurposingSkillStub(_AvailabilitySkillStub):
+        def __init__(self, available: bool, access_mode: str):
+            super().__init__(available)
+            self.access_mode = access_mode
+
+    class _RepurposingRegistry(_RegistryStub):
+        def __init__(self):
+            self.skills = {
+                "RepoDB": _RepurposingSkillStub(False, "DATASET"),
+                "DrugCentral": _RepurposingSkillStub(False, "REST_API"),
+                "DrugBank": _RepurposingSkillStub(False, "REST_API"),
+                "openFDA Human Drug": _RepurposingSkillStub(True, "REST_API"),
+                "DailyMed": _RepurposingSkillStub(True, "REST_API"),
+            }
+
+        def get_skills_for_query(self, query):
+            return ["DailyMed", "openFDA Human Drug"]
+
+        def get_skill(self, skill_name):
+            return self.skills.get(skill_name)
+
+    retriever = RetrieverAgent(
+        _PlannerBypassLLMStub(),
+        _RepurposingRegistry(),
+        coder_agent=coder,
+        resource_registry=_ResourceRegistryStub(
+            [
+                type("Entry", (), {"name": "RepoDB", "status": "missing_metadata", "access_mode": "DATASET"})(),
+                type("Entry", (), {"name": "DrugCentral", "status": "missing_metadata", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "DrugBank", "status": "missing_metadata", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "openFDA Human Drug", "status": "ready", "access_mode": "REST_API"})(),
+                type("Entry", (), {"name": "DailyMed", "status": "ready", "access_mode": "REST_API"})(),
+            ]
+        ),
+    )
+
+    updated = retriever.execute(state)
+
+    assert "DailyMed" in updated.retrieved_text
+    assert "openFDA Human Drug" in updated.retrieved_text
+    assert "Open Targets Platform" not in updated.retrieved_text
+    assert "DRUGMECHDB" not in updated.retrieved_text
+    assert coder.last_skill_names == ["openFDA Human Drug", "DailyMed"]
+
+
+class _NoOpAgent:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def execute(self, state):
+        return state
+
+
+class _RetrieverNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.retrieved_text = "retrieved"
+        return state
+
+
+class _VerboseRetrieverNodeStub(_NoOpAgent):
+    def execute(self, state):
+        print("[Retriever Agent] noisy retriever log")
+        state.retrieved_text = "retrieved"
+        return state
+
+
+class _ResponderNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.current_answer = "answer"
+        return state
+
+    def execute_simple(self, state):
+        state.current_answer = "answer"
+        return state
+
+
+class _VerboseResponderNodeStub(_NoOpAgent):
+    def execute(self, state):
+        print("[Responder Agent] noisy responder log")
+        state.current_answer = "answer"
+        return state
+
+    def execute_simple(self, state):
+        print("[Responder Agent] noisy simple responder log")
+        state.current_answer = "answer"
+        return state
+
+
+class _ModeAwareResponderNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.current_answer = "graph-answer"
+        return state
+
+    def execute_simple(self, state):
+        state.current_answer = "simple-answer"
+        return state
+
+
+class _ReflectContinueNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.should_continue = True
+        state.max_iterations_reached = False
+        state.evidence_sufficient = False
+        state.current_reward = 0.4
+        state.reflection_feedback = "Need supporting web evidence."
+        return state
+
+
+class _ReflectStopNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.should_continue = False
+        state.max_iterations_reached = False
+        state.evidence_sufficient = True
+        state.current_reward = 0.8
+        state.reflection_feedback = "Current evidence is sufficient."
+        return state
+
+
+class _WebSearchNodeStub(_NoOpAgent):
+    def execute(self, state):
+        state.current_answer += "\nweb-evidence"
+        return state
+
+    def execute_simple(self, state):
+        state.web_search_results = [
+            {
+                "source": "PubMed",
+                "url": "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+                "snippet": "Supporting authority-first web evidence.",
+            }
+        ]
+        return state
+
+    def execute_direct(self, state):
+        state.current_answer = "web-only-answer"
+        return state
+
+
+class _WebSkillStub:
+    pass
+
+
+class _RuntimeRegistryStub:
+    def get_skill(self, name):
+        if name == "WebSearch":
+            return _WebSkillStub()
+        return None
+
+
+class _PlannerNodeStub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def plan(self, query, omics_constraints=None):
+        return QueryPlan(
+            question_type="labeling",
+            entities={"drug": ["metformin"]},
+            subquestions=["What prescribing information is available for metformin?"],
+            preferred_skills=["DailyMed"],
+            preferred_evidence_types=["label_text"],
+            requires_graph_reasoning=False,
+            requires_prediction_sources=False,
+            requires_web_fallback=False,
+            answer_risk_level="high",
+            notes=["Direct label lookup; graph reasoning is unnecessary."],
+        )
+
+
+def test_simple_mode_uses_explicit_stage_trace(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query("What does imatinib target?", thinking_mode="simple")
+
+    assert result["success"] is True
+    assert result["execution_trace"] == [
+        "PLAN",
+        "RETRIEVE",
+        "NORMALIZE_EVIDENCE",
+        "ASSESS_CLAIMS",
+        "WEB_SEARCH",
+        "ANSWER",
+    ]
+
+
+class _SimpleModeWebAwareResponderNodeStub(_NoOpAgent):
+    def execute_simple(self, state):
+        assert state.web_search_results
+        state.current_answer = "simple-answer-with-web"
+        return state
+
+
+def test_simple_mode_populates_web_results_before_simple_response(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _SimpleModeWebAwareResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query("What does imatinib target?", thinking_mode="simple")
+
+    assert result["success"] is True
+    assert result["answer"] == "simple-answer-with-web"
+
+
+def test_graph_mode_skips_graph_when_plan_and_evidence_do_not_require_it(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "PlannerAgent", _PlannerNodeStub)
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query(
+        "What prescribing and safety information is available for metformin?",
+        thinking_mode="graph",
+    )
+
+    assert result["success"] is True
+    assert "OPTIONAL_GRAPH:skipped" in result["execution_trace"]
+
+
+def test_query_accepts_thinking_mode_enum_for_simple(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ModeAwareResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query("What does imatinib target?", thinking_mode=ThinkingMode.SIMPLE)
+
+    assert result["success"] is True
+    assert result["mode"] == "simple"
+    assert result["answer"] == "simple-answer"
+
+
+def test_query_accepts_thinking_mode_enum_for_web_only(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ModeAwareResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query("What does imatinib target?", thinking_mode=ThinkingMode.WEB_ONLY)
+
+    assert result["success"] is True
+    assert result["mode"] == "web_only"
+    assert result["answer"] == "web-only-answer"
+
+
+def test_query_accepts_thinking_mode_enum_for_graph(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "PlannerAgent", _PlannerNodeStub)
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ModeAwareResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _ReflectStopNodeStub)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query(
+        "What prescribing and safety information is available for metformin?",
+        thinking_mode=ThinkingMode.GRAPH,
+    )
+
+    assert result["success"] is True
+    assert result["mode"] == "graph"
+    assert result["answer"] == "graph-answer"
+    assert "REFLECT" in result["execution_trace"]
+    assert "WEB_SEARCH" not in result["execution_trace"]
+
+
+def test_graph_mode_records_reflect_and_web_search_when_reflection_requests_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "PlannerAgent", _PlannerNodeStub)
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ModeAwareResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _ReflectContinueNodeStub)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _WebSearchNodeStub)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query(
+        "What prescribing and safety information is available for metformin?",
+        thinking_mode="graph",
+    )
+
+    assert result["success"] is True
+    assert "REFLECT" in result["execution_trace"]
+    assert "WEB_SEARCH" in result["execution_trace"]
+    assert result["answer"].endswith("web-evidence")
+
+
+def test_query_verbose_false_suppresses_agent_logs(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+    monkeypatch.setattr(main_system_module, "build_default_registry", lambda config: _RuntimeRegistryStub())
+    monkeypatch.setattr(main_system_module, "build_resource_registry", lambda registry: object())
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _VerboseRetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _VerboseResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    system = main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    result = system.query("What does imatinib target?", thinking_mode="simple", verbose=False)
+    captured = capsys.readouterr()
+
+    assert result["success"] is True
+    assert "[Retriever Agent]" not in captured.out
+    assert "[Responder Agent]" not in captured.out
+
+
+def test_system_init_suppresses_registry_startup_noise(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(main_system_module, "LLMClient", lambda config: object())
+
+    def _noisy_build_default_registry(config):
+        print("TTDSkill: file not found — set config['drug_target_tsv']")
+        return _RuntimeRegistryStub()
+
+    def _noisy_build_resource_registry(registry):
+        print("TarKGSkill: file not found — set config['tsv_path']")
+        return object()
+
+    monkeypatch.setattr(main_system_module, "build_default_registry", _noisy_build_default_registry)
+    monkeypatch.setattr(main_system_module, "build_resource_registry", _noisy_build_resource_registry)
+    monkeypatch.setattr(main_system_module, "CoderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RetrieverAgent", _RetrieverNodeStub)
+    monkeypatch.setattr(main_system_module, "GraphBuilderAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "RerankerAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "ResponderAgent", _ResponderNodeStub)
+    monkeypatch.setattr(main_system_module, "ReflectorAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "WebSearchAgent", _NoOpAgent)
+    monkeypatch.setattr(main_system_module, "wrap_answer_card", lambda answer, result: answer)
+
+    main_system_module.DrugClawSystem(config=object(), enable_logging=False)
+    captured = capsys.readouterr()
+
+    assert "file not found" not in captured.out

@@ -31,14 +31,13 @@ Search DrugComb summary records by any entity. Auto-detects type by pattern:
 
 ## Usage
 
-See `if __name__ == "__main__"` block in `50_DrugComb.py` for runnable examples covering: drug name search, cell-line search, batch search, and JSON output.
+See `if __name__ == "__main__"` block in `example.py` for runnable examples covering: drug name search, cell-line search, batch search, and JSON output.
 
 ## Data
 
-- **Source**: DrugComb v1.4 summary table (`summary_table_v1.4.csv`, 193 MB)
-- **Download**: <https://zenodo.org/records/11102665>
-- **Key columns**: `block_id`, `drug_row`, `drug_col`, `cell_line_name`, `synergy_zip`, `synergy_bliss`, `synergy_loewe`, `synergy_hsa`, `css_ri` / `css`, `study_name`
-- **Path**: `DATA_PATH` variable in `50_DrugComb.py`
+- **Source**: DrugComb normalized full-package output
+- **Key columns**: `drug_row`, `drug_col`, `cell_line_name`, `synergy_zip`, `synergy_bliss`
+- **Path**: `resources_metadata/drug_combination/DrugComb/drugcomb.csv`
 
 ## Citation
 

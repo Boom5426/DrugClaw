@@ -34,8 +34,8 @@ Keep network timeouts short and preserve the script's native access method
 
 ## Validation
 
-- Validation script: `tools/65_FDA_Orange_Book_smoke_test.py`
-- Run: `python tools/65_FDA_Orange_Book_smoke_test.py`
+- Validation script: `maintainers/smoke/65_FDA_Orange_Book_smoke_test.py`
+- Run: `python maintainers/smoke/65_FDA_Orange_Book_smoke_test.py`
 
 ## Notes
 

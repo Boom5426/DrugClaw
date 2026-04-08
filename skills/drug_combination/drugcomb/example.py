@@ -1,13 +1,8 @@
 """
-DrugComb - Drug Combination Synergy & Sensitivity Data (Cancer)
-Category: Drug-centric | Type: DB | Subcategory: Drug Combination/Synergy
-Link: https://zenodo.org/records/11102665
-Paper: https://academic.oup.com/nar/article/47/W1/W43/5486743
+DrugComb query example for canonical packaged resource output.
 
-Query the DrugComb summary table for drug combination synergy scores,
-sensitivity (CSS), and cell-line information across cancer screens.
-
-Access method: Local CSV (summary_table_v1.4.csv from Zenodo).
+Default file: resources_metadata/drug_combination/DrugComb/drugcomb.csv
+Columns: drug_row, drug_col, cell_line_name, synergy_zip, synergy_bliss
 """
 
 import csv
@@ -21,7 +16,7 @@ DATA_PATH = str(
     / "resources_metadata"
     / "drug_combination"
     / "DrugComb"
-    / "summary_table_v1.4.csv"
+    / "drugcomb.csv"
 )
 
 # ---------------------------------------------------------------------------

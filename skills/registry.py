@@ -1,8 +1,8 @@
 """
 SkillRegistry — central hub for all RAG skills in DrugClaw.
 
-Skills are now organized by subcategory (15 categories from 68DrugResources.xlsx)
-rather than by resource type (KG / Database / Dataset).
+Skills are now organized by subcategory (15 categories from the historical
+resource inventory) rather than by resource type (KG / Database / Dataset).
 
 Backward compatibility is maintained: the existing agent_retriever still
 calls get_database() / get_entity_relationships().

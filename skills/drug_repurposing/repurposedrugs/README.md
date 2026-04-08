@@ -8,8 +8,8 @@
 
 ## Setup
 
-1. Download the dataset from: <https://repurposedrugs.org/>
-2. Set `csv_path` (or `tsv_path` / `json_path`) in config (see below).
+1. Canonical packaged file: `resources_metadata/drug_repurposing/RepurposeDrugs/repurposedrugs.csv`
+2. Set `csv_path` in config (or use resolver defaults).
 
 ## Configuration
 
@@ -24,7 +24,7 @@
 from drugclaw.skills.drug_repurposing.repurposedrugs import RepurposeDrugsSkill
 
 skill = RepurposeDrugsSkill(config={
-    "csv_path": "...",  # path to RepurposeDrugs CSV/TSV export
+    "csv_path": "/data/boom/Agent/DrugClaw/resources_metadata/drug_repurposing/RepurposeDrugs/repurposedrugs.csv",
     "delimiter": "...",  # column delimiter (default: auto-detect from extension)
 })
 

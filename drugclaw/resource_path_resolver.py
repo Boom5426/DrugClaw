@@ -111,8 +111,21 @@ def get_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def get_resources_metadata_root(repo_root: Path | None = None) -> Path:
+    return (repo_root or get_repo_root()) / "resources_metadata"
+
+
+def canonical_local_resource_paths(repo_root: Path | None = None) -> Dict[str, Path]:
+    resources_root = get_resources_metadata_root(repo_root)
+    return {
+        "DrugBank": resources_root / "drug_knowledgebase" / "DrugBank",
+        "SIDER": resources_root / "adr" / "SIDER",
+        "TTD": resources_root / "dti" / "TTD",
+    }
+
+
 def get_package_manifest_dir(repo_root: Path | None = None) -> Path:
-    return (repo_root or get_repo_root()) / "resources_metadata" / "packages"
+    return get_resources_metadata_root(repo_root) / "packages"
 
 
 def is_path_key(key: str) -> bool:
@@ -141,12 +154,32 @@ def resolve_package_component_paths(
     repo_root: Path | None = None,
 ) -> List[str]:
     root = repo_root or get_repo_root()
+    resources_root = get_resources_metadata_root(root).resolve(strict=False)
     resolved: List[str] = []
     for value in values:
         candidate = str(value or "").strip()
         if not candidate:
             continue
-        resolved.append(str(resolve_path_value(candidate, root)))
+        path_candidate = Path(candidate).expanduser()
+        if path_candidate.is_absolute():
+            resolved.append(
+                str(
+                    _resolve_package_component_absolute_path(
+                        path_candidate,
+                        resources_root=resources_root,
+                    )
+                )
+            )
+            continue
+        resolved.append(
+            str(
+                _resolve_package_component_relative_path(
+                    path_candidate,
+                    repo_root=root,
+                    resources_root=resources_root,
+                )
+            )
+        )
     return resolved
 
 
@@ -218,3 +251,46 @@ def _collect_nested_paths(items: Iterable[tuple[Any, Any]]) -> List[str]:
         if isinstance(value, str) and value.strip() and is_path_key(str(key)):
             nested_paths.append(value)
     return nested_paths
+
+
+def _resolve_package_component_relative_path(
+    candidate: Path,
+    *,
+    repo_root: Path,
+    resources_root: Path,
+) -> Path:
+    # Repo-relative package component paths are only valid when rooted at
+    # the canonical runtime tree: resources_metadata/.
+    if candidate.parts and candidate.parts[0] == "resources_metadata":
+        resolved = (repo_root / candidate).resolve(strict=False)
+        if resolved == resources_root or resources_root in resolved.parents:
+            return resolved
+    return _invalid_package_component_path(resources_root, candidate)
+
+
+def _resolve_package_component_absolute_path(
+    candidate: Path,
+    *,
+    resources_root: Path,
+) -> Path:
+    resolved = candidate.resolve(strict=False)
+    if resolved == resources_root or resources_root in resolved.parents:
+        return resolved
+    return _invalid_package_component_path(resources_root, resolved)
+
+
+def _invalid_package_component_path(resources_root: Path, candidate: Path) -> Path:
+    return resources_root / "__invalid_package_component_path__" / _sanitize_relative_path(candidate)
+
+
+def _sanitize_relative_path(candidate: Path) -> str:
+    segments: List[str] = []
+    for part in candidate.parts:
+        if not part or part in {".", "/", "\\"}:
+            continue
+        cleaned = part.replace("..", "dotdot").replace("/", "_").replace("\\", "_").replace(":", "_")
+        if cleaned:
+            segments.append(cleaned)
+    if not segments:
+        return "empty"
+    return "__".join(segments)

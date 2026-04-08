@@ -9,34 +9,31 @@ description: >
 
 # RepurposeDrugs Query Skill
 
-Search single-agent drug-disease repurposing associations. Auto-detects query type by pattern:
+Search canonical drug-disease repurposing rows. Auto-detects query type by pattern:
 
 | Input Pattern | Detected As | Match Logic |
 |---|---|---|
-| `NCT01856868` | Trial NCT ID | exact match in parsed NCT_IDs |
-| `1` – `4` | Phase number | exact on `Phase` |
-| anything else | free text | substring on `Drug_name` OR `Disease_name` |
+| `34567890` | PMID | exact on `pmid` |
+| anything else | free text | substring on `drug` OR `disease` |
 
 ## API
 
 | Function | Input | Returns |
 |---|---|---|
-| `load_data(path)` | xlsx path | DataFrame (adds `NCT_IDs` column) |
-| `search(df, entity)` | single entity string | DataFrame |
-| `search_batch(df, entities)` | list of entity strings | dict[str, DataFrame] |
-| `summarize(hits, entity)` | DataFrame + label | compact LLM-readable text |
-| `to_json(hits)` | DataFrame | list[dict] |
+| `load_data(path)` | CSV path | `list[dict]` |
+| `search(rows, entity)` | single entity string | `list[dict]` |
+| `search_batch(rows, entities)` | list of entity strings | `dict[str, list[dict]]` |
+| `summarize(hits, entity)` | rows + label | compact text |
+| `to_json(hits)` | rows | `list[dict]` |
 
 ## Usage
 
-See `if __name__ == "__main__"` block in `16_RepurposeDrugs.py` for runnable examples covering: drug name, disease name, NCT ID lookup, batch search, and JSON output.
+See `if __name__ == "__main__"` block in `example.py` for runnable examples.
 
 ## Data
 
-- **Source**: RepurposeDrugs – Ianevski A et al., *Briefings in Bioinformatics*, 2024
+- **Source**: RepurposeDrugs normalized full-package output
 - **URL**: <https://repurposedrugs.org/>
-- **Local file**: `dataset_single.xlsx`
-- **Columns**: `Drug_name`, `Disease_name`, `Phase`, `Merged_RefNew`
-- **Derived**: `NCT_IDs` (list of NCT identifiers extracted from `Merged_RefNew` URL)
-- **Scale**: 4 314 compounds × 1 756 indications, 28 148 drug-disease pairs
-- **Path**: `DATA_PATH` variable in `16_RepurposeDrugs.py`
+- **Local file**: `repurposedrugs.csv`
+- **Columns**: `drug`, `disease`, `score`, `status`, `pmid`
+- **Path**: `resources_metadata/drug_repurposing/RepurposeDrugs/repurposedrugs.csv`

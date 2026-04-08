@@ -8,8 +8,8 @@
 
 ## Setup
 
-1. Download the dataset from: <https://www.synapse.org/#!Synapse:syn2370773>
-2. Set `csv_path` (or `tsv_path` / `json_path`) in config (see below).
+1. Canonical packaged file: `resources_metadata/dti/GDKD/gdkd.csv`
+2. Optional override: set `csv_path` in config.
 
 ## Usage
 
@@ -17,7 +17,7 @@
 from drugclaw.skills.dti.gdkd import GDKDSkill
 
 skill = GDKDSkill(config={
-    "csv_path": "/path/to/data.csv",
+    "csv_path": "/data/boom/Agent/DrugClaw/resources_metadata/dti/GDKD/gdkd.csv",
 })
 
 if skill.is_available():
