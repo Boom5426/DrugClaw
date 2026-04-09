@@ -7,9 +7,9 @@ Data  : new_bench_data/2sides/twosides_benchmark.json
         JSON array [{drug_1, drug_2, condition, label (0/1), PRR, query}, ...]
         label 1 = positive (pair causes AE), 0 = negative.
         Dataset is balanced: 500 positives + 500 negatives.
-Prompt: "Does the combination of {drug_A} and {drug_B} cause {adverse_event}?"
+QA    : Q = query field ("Does the combination of X and Y cause Z?")
+        A = "yes" / "no"
 Metric: Precision, Recall, F1, AUROC
-        (AUROC computed as balanced accuracy from binary hard predictions)
 """
 
 import json
@@ -22,23 +22,20 @@ DATA_PATH = (
 
 LABELS = ["yes", "no"]
 
-SYSTEM_PROMPT = """\
-You are a pharmacovigilance expert.
+SYSTEM_PROMPT = "You are an expert pharmaceutical AI assistant."
 
-Task: Determine whether the combination of two drugs causes the specified
-      adverse event based on known pharmacological interactions and safety data.
+TASK_BACKGROUND = """\
+Task: Pharmacovigilance — drug-pair adverse event prediction (TWOSIDES)
+
+TWOSIDES is a large-scale pharmacovigilance database derived from the FDA Adverse \
+Event Reporting System (FAERS). It records statistically significant associations \
+between drug combinations and adverse events, identified using the Proportional \
+Reporting Ratio (PRR). Each sample presents a drug pair and a specific adverse \
+event; your task is to determine whether the combination is associated with \
+that adverse event.
 
 Respond with ONLY a JSON object: {"answer": "<label>"}
-where <label> is one of: yes, no
-"""
-
-USER_TEMPLATE = """\
-Drug A: {drug_1}
-Drug B: {drug_2}
-Adverse Event: {condition}
-
-Does the combination of {drug_1} and {drug_2} cause {condition}?
-Respond with JSON: {{"answer": "yes"}} or {{"answer": "no"}}
+where <label> is one of: yes, no\
 """
 
 
@@ -51,9 +48,7 @@ def load_data(max_samples: int = 0) -> list[dict]:
         label_int = int(r["label"])
         gold = "yes" if label_int == 1 else "no"
         rows.append({
-            "drug_1":    r["drug_1"],
-            "drug_2":    r["drug_2"],
-            "condition": r["condition"],
+            "query":     r["query"],
             "gold":      gold,
             "_label":    label_int,
         })
@@ -79,11 +74,7 @@ def run(
         default_label="no",
         system_prompt=SYSTEM_PROMPT,
         samples=load_data(max_samples),
-        format_prompt=lambda s: USER_TEMPLATE.format(
-            drug_1=s["drug_1"],
-            drug_2=s["drug_2"],
-            condition=s["condition"],
-        ),
+        format_prompt=lambda s: f"{TASK_BACKGROUND}\n\n{s['query']}",
         mode=mode,
         maskself=maskself,
         key_file=key_file,
