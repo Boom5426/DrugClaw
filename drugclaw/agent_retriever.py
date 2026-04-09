@@ -1043,16 +1043,17 @@ Respond in JSON:
     def _evidence_items_to_retrieved_content(evidence_items) -> List[Dict[str, Any]]:
         records = []
         for item in evidence_items:
+            meta = item.metadata if isinstance(item.metadata, dict) else {}
             records.append({
                 "source": item.source_skill,
-                "source_entity": "",
+                "source_entity": meta.get("source_entity", ""),
                 "source_type": item.source_type,
-                "target_entity": "",
-                "target_type": "",
-                "relationship": item.claim,
+                "target_entity": meta.get("target_entity", ""),
+                "target_type": meta.get("target_type", ""),
+                "relationship": meta.get("relationship") or item.claim,
                 "weight": 1.0,
                 "evidence_text": item.snippet,
-                "skill_category": item.metadata.get("skill_category", ""),
+                "skill_category": meta.get("skill_category", ""),
                 "sources": [item.source_locator] if item.source_locator else [],
             })
         return records
