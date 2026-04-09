@@ -257,6 +257,7 @@ Provide your plan in JSON format:
                 if step.get("database")
             ]
 
+        requested_skills = list(dict.fromkeys(selected_skills))  # deduplicated, pre-filter
         selected_skills = self._filter_available_skills(selected_skills)
 
         print(f"[Retriever Agent] Selected skills: {selected_skills}")
@@ -319,6 +320,7 @@ Provide your plan in JSON format:
         state.retrieval_diagnostics = self._build_retrieval_diagnostics(
             coder_result,
             selected_skills,
+            filtered_out=[s for s in requested_skills if s not in selected_skills],
         ) + self._build_knowhow_diagnostics(
             getattr(state, "query_plan", None)
         )
@@ -998,6 +1000,8 @@ Respond in JSON:
     def _build_retrieval_diagnostics(
         coder_result: Dict[str, Any],
         skill_names: List[str],
+        *,
+        filtered_out: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         diagnostics: List[Dict[str, Any]] = []
         for skill_name in skill_names:
@@ -1011,6 +1015,16 @@ Respond in JSON:
                     "records": len(info.get("records", []) or []),
                     "output": info.get("output", ""),
                     **nested,
+                }
+            )
+        for skill_name in (filtered_out or []):
+            diagnostics.append(
+                {
+                    "skill": skill_name,
+                    "strategy": "filtered_out",
+                    "error": "skill unavailable: failed is_available() check or not registered",
+                    "records": 0,
+                    "output": "",
                 }
             )
         return diagnostics
